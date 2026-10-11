@@ -1,6 +1,8 @@
 import json
 import logging
+import os
 import random
+import uuid
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -9,10 +11,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Camera, Incident
-from app.schemas import Camera as CameraSchema
-from app.schemas import Incident as IncidentSchema
-from app.schemas import IncidentPatch, InternalIncident, SimulateRequest, Stats
+from app.models import Camera, Evidence, Incident, User
+from app.schemas import AuthRequest, AuthToken, Camera as CameraSchema
+from app.schemas import CameraCreate, CameraUpdate, Evidence as EvidenceSchema
+from app.schemas import EvidenceCreate, Incident as IncidentSchema
+from app.schemas import IncidentCreate, IncidentPatch, InternalIncident, SimulateRequest, Stats
 from app.seed import CAMERAS
 from app.services.incident_service import as_contract, camera_or_404, next_incident_id, severity_for, validate_transition
 from app.services.stream_service import iter_mjpeg
@@ -23,15 +26,97 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api")
 
 
+def _camera_to_contract(camera: Camera) -> dict:
+    return {
+        "id": camera.id,
+        "name": camera.name,
+        "location": json.loads(camera.location),
+        "status": camera.status,
+        "stream_url": camera.stream_url,
+    }
+
+
+def _evidence_to_contract(row: Evidence) -> dict:
+    return {
+        "id": row.id,
+        "incident_id": row.incident_id,
+        "type": row.type,
+        "url": row.url,
+        "created_at": row.created_at.isoformat(),
+    }
+
+
 @router.get("/health")
 def health(db: Session = Depends(get_db)):
     cameras = db.scalars(select(Camera)).all()
     return {"status": "ok", "service": "SentinelAI Control API", "cameras_online": sum(cam.status == "online" for cam in cameras), "cameras_total": len(cameras), "timestamp": datetime.now(timezone.utc).isoformat()}
 
 
+@router.post("/auth/login", response_model=AuthToken)
+def login(payload: AuthRequest):
+    expected_user = os.getenv("APP_ADMIN_USERNAME", "admin")
+    expected_password = os.getenv("APP_ADMIN_PASSWORD", "admin123")
+    if payload.username != expected_user or payload.password != expected_password:
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+    return {"token": "demo-admin-token", "user": {"username": payload.username, "role": "admin"}}
+
+
+@router.get("/auth/me")
+def me():
+    return {"username": os.getenv("APP_ADMIN_USERNAME", "admin"), "role": "admin"}
+
+
 @router.get("/cameras", response_model=list[CameraSchema])
 def cameras(db: Session = Depends(get_db)):
-    return [{"id": cam.id, "name": cam.name, "location": json.loads(cam.location), "status": cam.status, "stream_url": cam.stream_url} for cam in db.scalars(select(Camera).order_by(Camera.id)).all()]
+    return [_camera_to_contract(cam) for cam in db.scalars(select(Camera).order_by(Camera.id)).all()]
+
+
+@router.get("/cameras/{camera_id}", response_model=CameraSchema)
+def camera_detail(camera_id: str, db: Session = Depends(get_db)):
+    camera = camera_or_404(db, camera_id)
+    return _camera_to_contract(camera)
+
+
+@router.post("/cameras", response_model=CameraSchema, status_code=201)
+def create_camera(body: CameraCreate, db: Session = Depends(get_db)):
+    camera_id = body.id or f"cam_{uuid.uuid4().hex[:8]}"
+    if db.get(Camera, camera_id) is not None:
+        raise HTTPException(status_code=409, detail="Camera already exists")
+    row = Camera(
+        id=camera_id,
+        name=body.name,
+        location=json.dumps(body.location.model_dump()),
+        status=body.status,
+        stream_url=body.stream_url,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return _camera_to_contract(row)
+
+
+@router.patch("/cameras/{camera_id}", response_model=CameraSchema)
+def update_camera(camera_id: str, body: CameraUpdate, db: Session = Depends(get_db)):
+    camera = camera_or_404(db, camera_id)
+    updates = body.model_dump(exclude_unset=True)
+    if "name" in updates and updates["name"] is not None:
+        camera.name = updates["name"]
+    if "location" in updates and updates["location"] is not None:
+        camera.location = json.dumps(updates["location"].model_dump())
+    if "status" in updates and updates["status"] is not None:
+        camera.status = updates["status"]
+    if "stream_url" in updates and updates["stream_url"] is not None:
+        camera.stream_url = updates["stream_url"]
+    db.commit(); db.refresh(camera)
+    return _camera_to_contract(camera)
+
+
+@router.delete("/cameras/{camera_id}", status_code=204)
+def delete_camera(camera_id: str, db: Session = Depends(get_db)):
+    camera = camera_or_404(db, camera_id)
+    db.delete(camera)
+    db.commit()
+    return None
 
 
 @router.get("/incidents", response_model=list[IncidentSchema])
@@ -59,6 +144,26 @@ def incident_detail(incident_id: str, db: Session = Depends(get_db)):
     return as_contract(row)
 
 
+@router.post("/incidents", response_model=IncidentSchema, status_code=201)
+async def create_incident(body: IncidentCreate, db: Session = Depends(get_db)):
+    camera = camera_or_404(db, body.camera_id)
+    payload = {
+        "camera_id": body.camera_id,
+        "camera_name": body.camera_name or camera.name,
+        "location": (body.location.model_dump() if body.location else json.loads(camera.location)),
+        "type": body.type,
+        "confidence": body.confidence,
+        "timestamp": body.timestamp or datetime.now(timezone.utc).isoformat(),
+        "snapshot_url": body.snapshot_url,
+        "clip_url": body.clip_url,
+        "notes": body.notes,
+        "verification": (body.verification.model_dump() if body.verification else {"window_seconds": 2.5, "frames_confirmed": 30, "frames_required": 25}),
+    }
+    created = _create_incident(db, payload)
+    await ws_manager.broadcast("incident.created", created)
+    return created
+
+
 @router.patch("/incidents/{incident_id}", response_model=IncidentSchema)
 async def update_incident(incident_id: str, body: IncidentPatch, db: Session = Depends(get_db)):
     row = db.get(Incident, incident_id)
@@ -83,7 +188,7 @@ def stats(db: Session = Depends(get_db)):
     cameras_rows = db.scalars(select(Camera).order_by(Camera.id)).all()
     now = datetime.now(timezone.utc)
     start = now.replace(minute=0, second=0, microsecond=0) - timedelta(hours=23)
-    by_hour = { (start + timedelta(hours=index)).strftime("%H:00"): 0 for index in range(24) }
+    by_hour = {(start + timedelta(hours=index)).strftime("%H:00"): 0 for index in range(24)}
     by_type = {key: 0 for key in ("physical_altercation", "fall_collapse", "abnormal_crowd_movement")}
     by_status = {key: 0 for key in ("new", "acknowledged", "resolved")}
     by_camera = {cam.id: {"camera_id": cam.id, "name": cam.name, "count": 0} for cam in cameras_rows}
@@ -102,11 +207,19 @@ def _create_incident(db: Session, payload: dict) -> dict:
     incident_id = next_incident_id(db)
     timestamp = datetime.fromisoformat(payload["timestamp"].replace("Z", "+00:00"))
     row = Incident(
-        id=incident_id, camera_id=payload["camera_id"], camera_name=payload["camera_name"],
-        location=json.dumps(payload["location"]), type=payload["type"], confidence=payload["confidence"],
-        severity=severity_for(payload["confidence"]), timestamp=timestamp,
-        status="new", snapshot_url=payload["snapshot_url"], clip_url=payload["clip_url"],
-        notes=payload.get("notes", ""), verification=json.dumps(payload["verification"]),
+        id=incident_id,
+        camera_id=payload["camera_id"],
+        camera_name=payload["camera_name"],
+        location=json.dumps(payload["location"]),
+        type=payload["type"],
+        confidence=payload["confidence"],
+        severity=payload.get("severity") or severity_for(payload["confidence"]),
+        timestamp=timestamp,
+        status="new",
+        snapshot_url=payload["snapshot_url"],
+        clip_url=payload["clip_url"],
+        notes=payload.get("notes", ""),
+        verification=json.dumps(payload["verification"] or {"window_seconds": 2.5, "frames_confirmed": 30, "frames_required": 25}),
     )
     db.add(row)
     db.commit()
@@ -116,10 +229,12 @@ def _create_incident(db: Session, payload: dict) -> dict:
 
 @router.post("/internal/incidents", response_model=IncidentSchema, status_code=201)
 async def create_internal_incident(body: InternalIncident, db: Session = Depends(get_db)):
-    payload = body.model_dump()
-    camera_or_404(db, payload["camera_id"])
-    payload["location"] = body.location.model_dump()
-    payload["verification"] = body.verification.model_dump()
+    payload = body.model_dump(exclude_none=True)
+    camera = camera_or_404(db, payload["camera_id"])
+    payload["camera_name"] = body.camera_name or camera.name
+    payload["location"] = body.location.model_dump() if body.location is not None else json.loads(camera.location)
+    payload["verification"] = (body.verification.model_dump() if body.verification is not None else {"window_seconds": 2.5, "frames_confirmed": 30, "frames_required": 25})
+    payload["severity"] = body.severity or severity_for(body.confidence)
     created = _create_incident(db, payload)
     await ws_manager.broadcast("incident.created", created)
     return created
@@ -132,8 +247,11 @@ async def simulate(body: SimulateRequest, db: Session = Depends(get_db)):
     confidence = round(random.uniform(0.78, 0.97), 2)
     slug = body.type
     payload = {
-        "camera_id": camera.id, "camera_name": camera.name, "location": location,
-        "type": body.type, "confidence": confidence,
+        "camera_id": camera.id,
+        "camera_name": camera.name,
+        "location": location,
+        "type": body.type,
+        "confidence": confidence,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "snapshot_url": f"/media/snapshots/{camera.id}_{slug}.jpg",
         "clip_url": incident_video_url(slug),
@@ -143,6 +261,37 @@ async def simulate(body: SimulateRequest, db: Session = Depends(get_db)):
     created = _create_incident(db, payload)
     await ws_manager.broadcast("incident.created", created)
     return created
+
+
+@router.post("/evidence/upload", response_model=EvidenceSchema, status_code=201)
+def upload_evidence(body: EvidenceCreate, db: Session = Depends(get_db)):
+    incident = db.get(Incident, body.incident_id)
+    if incident is None:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    row = Evidence(
+        id=f"ev_{uuid.uuid4().hex[:8]}",
+        incident_id=body.incident_id,
+        type=body.type,
+        url=body.url,
+        created_at=datetime.now(timezone.utc),
+    )
+    db.add(row)
+    db.commit(); db.refresh(row)
+    return _evidence_to_contract(row)
+
+
+@router.get("/evidence/{evidence_id}", response_model=EvidenceSchema)
+def detail_evidence(evidence_id: str, db: Session = Depends(get_db)):
+    row = db.get(Evidence, evidence_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Evidence not found")
+    return _evidence_to_contract(row)
+
+
+@router.get("/incidents/{incident_id}/evidence", response_model=list[EvidenceSchema])
+def incident_evidence(incident_id: str, db: Session = Depends(get_db)):
+    rows = db.scalars(select(Evidence).where(Evidence.incident_id == incident_id).order_by(Evidence.created_at.desc())).all()
+    return [_evidence_to_contract(row) for row in rows]
 
 
 @router.get("/stream/{camera_id}")

@@ -106,9 +106,11 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="SentinelAI Control API", version="1.0.0", description="Evidence-backed safety incident API for authorized feeds.", lifespan=lifespan)
+origins = os.getenv("CORS_ORIGINS", "*")
+allowed_origins = [origin.strip() for origin in origins.split(",") if origin.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins if allowed_origins else ["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
