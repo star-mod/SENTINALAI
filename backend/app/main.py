@@ -106,7 +106,19 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="SentinelAI Control API", version="1.0.0", description="Evidence-backed safety incident API for authorized feeds.", lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "https://sentinalai-frontend.onrender.com",
+        "https://sentinalai-rzg2.onrender.com",
+        "*",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 app.include_router(router)
 app.mount("/media", StaticFiles(directory=str(media_root()), check_dir=False), name="media")
 
