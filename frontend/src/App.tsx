@@ -175,7 +175,7 @@ export default function App() {
         </div>
 
         {apiError && !mockMode && <div className="error-banner"><CloudOff size={16} /><span>Backend unavailable: {apiError}. Set <code>VITE_USE_MOCK=true</code> to run the offline demo.</span><button onClick={() => setApiError('')}><X size={15} /></button></div>}
-        {page === 'Live Ops' && <LiveOps incidents={incidents} cameras={cameras} loading={loading} openIncident={openIncident} goToIncidents={() => setPage('Incidents')} simulate={() => setSimulateOpen(true)} activeCount={activeCount} acknowledgedCount={acknowledgedCount} resolvedToday={resolvedToday} avgConfidence={avgConfidence} mockMode={mockMode} />}
+        {page === 'Live Ops' && <LiveOps incidents={incidents} cameras={cameras} loading={loading} openIncident={openIncident} goToIncidents={() => setPage('Incidents')} simulate={() => setSimulateOpen(true)} activeCount={activeCount} acknowledgedCount={acknowledgedCount} resolvedToday={resolvedToday} avgConfidence={avgConfidence} mockMode={mockMode} paused={Boolean(selected)} />}
         {page === 'Map' && <MapView incidents={incidents} cameras={cameras} openIncident={openIncident} />}
         {page === 'Committee Inbox' && <CommitteeInbox incidents={incidents} openIncident={openIncident} resolveIncident={resolveForCommittee} />}
         {page === 'Incidents' && <IncidentsView incidents={incidents} cameras={cameras} loading={loading} openIncident={openIncident} />}
@@ -196,9 +196,9 @@ function StatCard({ label, value, unit, icon: Icon, tone, detail }: { label: str
   return <div className="stat-card"><div className="stat-top"><span>{label}</span><span className={`stat-icon ${tone}`}><Icon size={16} /></span></div><div className="stat-value">{value}<small>{unit}</small></div><div className="stat-foot"><span className="stat-indicator" />{detail}</div></div>
 }
 
-function LiveOps({ incidents, cameras, loading, openIncident, goToIncidents, simulate, activeCount, acknowledgedCount, resolvedToday, avgConfidence, mockMode }: {
+function LiveOps({ incidents, cameras, loading, openIncident, goToIncidents, simulate, activeCount, acknowledgedCount, resolvedToday, avgConfidence, mockMode, paused }: {
   incidents: Incident[]; cameras: Camera[]; loading: boolean; openIncident: (incident: Incident) => void; goToIncidents: () => void; simulate: () => void;
-  activeCount: number; acknowledgedCount: number; resolvedToday: number; avgConfidence: number; mockMode: boolean
+  activeCount: number; acknowledgedCount: number; resolvedToday: number; avgConfidence: number; mockMode: boolean; paused: boolean
 }) {
   const activeCameras = new Set(incidents.filter((item) => item.status === 'new').map((item) => item.camera_id))
   return <>
@@ -211,7 +211,7 @@ function LiveOps({ incidents, cameras, loading, openIncident, goToIncidents, sim
     </section>
     <section className="ops-layout">
       <div className="camera-section"><div className="section-heading"><div><h2>Camera grid <span className="section-count">{cameras.length.toString().padStart(2, '0')}</span></h2><p>LIVE AUTHORIZED FEEDS</p></div><div className="grid-legend"><span><i className="legend-live" /> Live</span><span><i className="legend-alert" /> Active alert</span></div></div>
-        {loading ? <div className="camera-grid">{[1, 2, 3, 4].map((number) => <div className="skeleton camera-skeleton" key={number} />)}</div> : <div className="camera-grid">{cameras.slice(0, 4).map((camera, index) => <CameraTile key={camera.id} camera={camera} index={index} hasIncident={activeCameras.has(camera.id)} mockMode={mockMode} />)}</div>}
+        {loading ? <div className="camera-grid">{[1, 2, 3, 4].map((number) => <div className="skeleton camera-skeleton" key={number} />)}</div> : <div className="camera-grid">{cameras.slice(0, 4).map((camera, index) => <CameraTile key={camera.id} camera={camera} index={index} hasIncident={activeCameras.has(camera.id)} mockMode={mockMode} paused={paused} />)}</div>}
       </div>
       <aside className="feed-panel"><div className="section-heading feed-heading"><div><h2>Incident feed</h2><p><span className="live-pulse small" /> LIVE EVENT STREAM</p></div><button className="icon-button small-button" title="Open incident register"><ArrowUpRight size={15} /></button></div>
         <div className="feed-scroll">{incidents.slice(0, 8).map((incident) => <IncidentRow key={incident.id} incident={incident} onClick={() => openIncident(incident)} compact />)}{incidents.length === 0 && <EmptyState title="No incidents detected" text="Verified events will appear here." />}</div>
@@ -222,12 +222,12 @@ function LiveOps({ incidents, cameras, loading, openIncident, goToIncidents, sim
   </>
 }
 
-function CameraTile({ camera, index, hasIncident, mockMode }: { camera: Camera; index: number; hasIncident: boolean; mockMode: boolean }) {
+function CameraTile({ camera, index, hasIncident, mockMode, paused }: { camera: Camera; index: number; hasIncident: boolean; mockMode: boolean; paused: boolean }) {
   const [failed, setFailed] = useState(false)
-  const live = !mockMode && !failed
+  const live = !mockMode && !failed && !paused
   return <motion.article className={`camera-tile ${hasIncident ? 'camera-alert' : ''}`} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: index * .07 }}>
     <div className="camera-image">
-      {live ? <img src={apiUrl(camera.stream_url)} alt={`${camera.name} live feed`} onError={() => setFailed(true)} /> : <div className={`feed-simulation feed-${index}`}><div className="feed-grid" /><span className="feed-crosshair" /><span className="feed-object" /><span className="feed-coordinate">CAM {camera.id.slice(-2)} · {new Date().toLocaleTimeString([], { hour12: false })}</span><span className="feed-state-label">{mockMode ? 'SIMULATED FEED' : 'NO SIGNAL'}</span><div className="feed-scanline" /></div>}
+      {live ? <img src={apiUrl(camera.stream_url)} alt={`${camera.name} live feed`} onError={() => setFailed(true)} /> : <div className={`feed-simulation feed-${index}`}><div className="feed-grid" /><span className="feed-crosshair" /><span className="feed-object" /><span className="feed-coordinate">CAM {camera.id.slice(-2)} · {new Date().toLocaleTimeString([], { hour12: false })}</span><span className="feed-state-label">{mockMode ? 'SIMULATED FEED' : paused ? 'STREAM PAUSED' : 'NO SIGNAL'}</span><div className="feed-scanline" /></div>}
       <div className="camera-overlay"><span className="live-badge"><i /> LIVE</span><span className="camera-serial">{camera.id.toUpperCase()}</span></div>
       {hasIncident && <div className="camera-alert-label"><span /> ACTIVE INCIDENT</div>}
       <div className="camera-bottom"><div><strong>{camera.name}</strong><small><MapPin size={11} /> {camera.location.label}</small></div></div>
