@@ -10,3 +10,7 @@ frontend/node_modules/
 frontend/dist/
 frontend/.env.local
 backend/.env
+.venv*/
+frontend/.vite/
+
+part2/data/videos/cam_0[1-3]*.mp4

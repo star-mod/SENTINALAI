@@ -1,6 +1,6 @@
 # SentinelAI Control Room
 
-Local-first public safety incident demo for authorized prerecorded or simulated feeds. The dashboard and API support operator review; they do not identify people or take autonomous action. The existing `part2/` project is left unchanged.
+Local-first public safety incident demo for authorized prerecorded or simulated feeds. The dashboard and API support operator review; they do not identify people or take autonomous action. `part2/` has been updated to the latest Part 2 drop, including real camera footage in `part2/data/videos/` (see its SOURCES.md for provenance and usage terms).
 
 ## Project Structure
 

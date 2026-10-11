@@ -1,3 +1,18 @@
+# REAL FOOTAGE UPDATE (SentinelAI integration)
+
+cam_01..cam_03 are now **real camera footage** (re-encoded to H.264, max 1280px wide, for browser playback). The earlier synthetic stick-figure clips are replaced; `data/sample_generator.py` remains only as an offline fallback.
+
+| Camera | File | Real source | Notes |
+|---|---|---|---|
+| cam_01 | cam_01_fall.mp4 | github.com/TOTYsir/fyp-fall-detection `self_rec.mp4` | Real person falling (no explicit license; non-commercial demo use) |
+| cam_02 | cam_02_altercation.mp4 | github.com/airtlab/A-Dataset-for-Automatic-Violence-Detection-in-Videos `violent/cam1/43.mp4` | Real fight; research/educational use only |
+| cam_03 | cam_03_crowd.mp4 | github.com/shajishah/Crowd-Detection `people_walking.mp4` | Real overhead pedestrian crowd; license unverified. It shows normal flow, not a surge (UMN was unreachable) |
+| cam_04 | cam_04_normal.mp4 | OpenCV `vtest.avi` | Apache 2.0, negative control |
+
+Do not redistribute cam_01-03 publicly; check each source's terms first.
+
+---
+
 # SentinelAI — Video Asset Sources & Provenance Documentation
 
 This document records the provenance, licensing, technical specifications, and verification results for all video feeds used by SentinelAI.

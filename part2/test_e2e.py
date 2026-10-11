@@ -1,11 +1,8 @@
 import asyncio
 import json
 import urllib.request
-
-import pytest
 import websockets
 
-@pytest.mark.asyncio
 async def test_full_pipeline():
     uri = 'ws://localhost:8000/ws/incidents'
     async with websockets.connect(uri) as ws:
