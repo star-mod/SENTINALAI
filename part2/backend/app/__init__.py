@@ -1,0 +1,1 @@
+"""SentinelAI FastAPI Application Package."""
