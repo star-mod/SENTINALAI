@@ -22,7 +22,7 @@ class Incident(BaseModel):
     camera_id: str
     camera_name: str
     location: Location
-    type: Literal["physical_altercation", "fall_collapse", "abnormal_crowd_movement"]
+    type: Literal["physical_altercation", "fall_collapse", "abnormal_crowd_movement", "vehicle_accident"]
     confidence: float = Field(ge=0.0, le=1.0)
     severity: Literal["low", "medium", "high"]
     timestamp: str  # ISO-8601 UTC
@@ -47,7 +47,7 @@ class IncidentPatchRequest(BaseModel):
 
 
 class SimulateRequest(BaseModel):
-    type: Literal["physical_altercation", "fall_collapse", "abnormal_crowd_movement"]
+    type: Literal["physical_altercation", "fall_collapse", "abnormal_crowd_movement", "vehicle_accident"]
     camera_id: str = "cam_01"
 
 
@@ -55,7 +55,7 @@ class InternalIncidentCreate(BaseModel):
     camera_id: str
     camera_name: str
     location: Location
-    type: Literal["physical_altercation", "fall_collapse", "abnormal_crowd_movement"]
+    type: Literal["physical_altercation", "fall_collapse", "abnormal_crowd_movement", "vehicle_accident"]
     confidence: float
     severity: Literal["low", "medium", "high"]
     timestamp: str

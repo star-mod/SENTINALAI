@@ -34,6 +34,9 @@ detectors:
     direction_divergence_threshold: 0.40
     min_people_for_crowd: 3
 
+  vehicle_accident:
+    enabled: true
+
 evidence:
   clip_pre_seconds: 3.0
   clip_post_seconds: 3.0

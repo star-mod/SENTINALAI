@@ -15,7 +15,7 @@ CAMERAS = [
     ("cam_03", "Stadium Gate 4 - Entry Plaza", 12.9698, 77.5890, "Stadium Gate 4"),
     ("cam_04", "Financial District - Main Arcade", 12.9752, 77.5912, "Financial District"),
 ]
-TYPES = ("physical_altercation", "fall_collapse", "abnormal_crowd_movement")
+TYPES = ("physical_altercation", "fall_collapse", "abnormal_crowd_movement", "vehicle_accident")
 SEED_COUNT = 6
 SEED_NOTES = {"Historical demo record", "Verified event for operator review"}
 
@@ -52,6 +52,7 @@ def seed_database(db: Session) -> None:
             minutes_ago += 90
         db.add(Incident(
             id=f"inc_{index + 1:04d}", camera_id=camera_id, camera_name=camera_name,
+            event_id=f"seed_{index + 1:04d}",
             location=json.dumps({"lat": lat, "lng": lng, "label": label}),
             type=incident_type, confidence=confidence, severity=severity,
             timestamp=now - timedelta(minutes=minutes_ago),
@@ -60,5 +61,8 @@ def seed_database(db: Session) -> None:
             clip_url=incident_video_url(incident_type),
             notes="Historical demo record" if index else "Verified event for operator review",
             verification=json.dumps({"window_seconds": 2.5, "frames_confirmed": 30 + index % 12, "frames_required": 25}),
+            source="simulation", priority="normal", workflow_status="not_configured",
+            updated_at=now - timedelta(minutes=minutes_ago),
+            workflow_updated_at=now - timedelta(minutes=minutes_ago),
         ))
     db.commit()

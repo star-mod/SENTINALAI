@@ -8,6 +8,7 @@ import math
 import os
 import threading
 import time
+import uuid
 from typing import Dict, List, Optional, Any, Tuple
 import cv2
 import numpy as np
@@ -348,8 +349,9 @@ class CameraWorker(threading.Thread):
         trigger_time: float
     ):
         """Generates evidence snapshots/clips and submits to API server."""
-        ts_slug = int(time.time() * 1000) % 100000
-        incident_id = f"inc_{self.camera_id}_{ts_slug:05d}"
+        event_uuid = uuid.uuid4().hex
+        incident_id = f"inc_{event_uuid[:28]}"
+        event_id = f"evt_{event_uuid}"
 
         # 1. Save Snapshot immediately using the current verified annotated frame
         snapshot_url = self.ring_buffer.save_snapshot(
@@ -367,6 +369,8 @@ class CameraWorker(threading.Thread):
         )
 
         loc = self.camera_cfg.get("location", {"lat": 12.9716, "lng": 77.5946, "label": "Security Zone"})
+        if not isinstance(loc, dict):
+            loc = {"lat": 12.9716, "lng": 77.5946, "label": str(loc)}
 
         # Build Incident Payload strictly matching Shared Contract
         # Stable ID generation: Use a hash of camera, type, track_id, and a time window (e.g., 60s)
@@ -376,30 +380,32 @@ class CameraWorker(threading.Thread):
         dedup_key = f"{self.camera_id}_{detection.incident_type}_{track_ids_str}_{time_window}"
 
         payload = {
-            "event_id": f"evt_{incident_id}",
-            "deduplication_key": dedup_key,
+            "event_id": event_id,
             "camera_id": self.camera_id,
-            "department_id": "dept_demo_01",
-            "location": self.camera_cfg.get("location", "Security Zone"),
-            "timestamp": datetime.fromtimestamp(trigger_time, tz=timezone.utc).isoformat(),
-            "incident_type": detection.incident_type.upper(),
-            "confidence": round(detection.confidence, 2),
-            "status": "UNVERIFIED",
-            "evidence_reference": snapshot_url,
-            "detection_method": "YOLO+ByteTrack+temporal_rules",
-            "detection_summary": {
+            "camera_name": self.camera_name,
+            "location": loc,
+            "type": detection.incident_type,
+            "confidence": detection.confidence,
+            "severity": detection.severity,
+            "timestamp": detection.timestamp,
+            "snapshot_url": snapshot_url,
+            "clip_url": clip_url,
+            "notes": detection.description,
+            "verification": detection.verification,
+            "schema_version": "1.0",
+            "source": "ai_detection",
+            "priority": detection.severity,
+            "detection_metadata": {
                 "track_ids": detection.track_ids,
                 "frames_confirmed": detection.verification.get("frames_confirmed"),
-                "severity": detection.severity.upper(),
-                "description": detection.description
+                "track_count": len(detection.track_ids),
+                "detector": detection.incident_type,
+                "deduplication_key": dedup_key,
             },
-            "priority": detection.severity.upper(),
-            "workflow_state": "NEW",
-            "requires_human_review": True
         }
 
         print("\n" + "="*50)
-        print(f"🚨 INCIDENT DETECTED: {payload['incident_type']}")
+        print(f"INCIDENT DETECTED: {payload['type']}")
         print(json.dumps(payload, indent=2))
         print("="*50 + "\n")
 
@@ -413,7 +419,13 @@ class CameraWorker(threading.Thread):
         # Also dispatch via HTTP to internal API endpoint
         def _post_async():
             try:
-                requests.post(self.api_url, json=payload, timeout=2.5)
+                token = os.getenv("INTERNAL_API_TOKEN", "local-dev-internal-token")
+                requests.post(
+                    self.api_url,
+                    json=payload,
+                    timeout=2.5,
+                    headers={"Authorization": f"Bearer {token}"},
+                )
             except Exception:
                 pass  # Graceful fallback if backend is momentarily restarting
 

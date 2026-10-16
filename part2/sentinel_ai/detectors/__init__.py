@@ -2,6 +2,7 @@ from sentinel_ai.detectors.base import BaseDetector, DetectorRegistry, FrameStat
 from sentinel_ai.detectors.fall import FallDetector
 from sentinel_ai.detectors.altercation import AltercationDetector
 from sentinel_ai.detectors.crowd import CrowdDetector
+from sentinel_ai.detectors.vehicle_accident import VehicleAccidentDetector
 
 __all__ = [
     "BaseDetector",
@@ -12,4 +13,5 @@ __all__ = [
     "FallDetector",
     "AltercationDetector",
     "CrowdDetector",
+    "VehicleAccidentDetector",
 ]

@@ -11,6 +11,7 @@ TYPE_CAMERAS = {
     "fall_collapse": "cam_01",
     "physical_altercation": "cam_02",
     "abnormal_crowd_movement": "cam_03",
+    "vehicle_accident": "cam_04",
 }
 
 

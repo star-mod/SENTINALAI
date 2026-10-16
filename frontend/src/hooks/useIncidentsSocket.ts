@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { apiUrl, createMockIncident, useMock } from '../api/client'
+import { api, apiUrl, createMockIncident, useMock } from '../api/client'
 import { playIncidentBuzzer } from '../api/alertSound'
 import { useSentinelStore } from '../store/useSentinelStore'
 import type { Incident, IncidentType } from '../types/contracts'
@@ -26,7 +26,8 @@ export function useIncidentsSocket() {
       setMockMode(true)
       generatorTimer = window.setInterval(() => {
         const cameraId = `cam_0${1 + Math.floor(Math.random() * 4)}`
-        const type = (['physical_altercation', 'fall_collapse', 'abnormal_crowd_movement'] as IncidentType[])[Math.floor(Math.random() * 3)]
+        const types: IncidentType[] = ['physical_altercation', 'fall_collapse', 'abnormal_crowd_movement', 'vehicle_accident']
+        const type = types[Math.floor(Math.random() * types.length)]
         handleIncident(createMockIncident(type, cameraId), true)
       }, 60_000)
       return () => window.clearInterval(generatorTimer)
@@ -36,11 +37,17 @@ export function useIncidentsSocket() {
       if (disposed) return
       const socketUrl = apiUrl('/ws/incidents').replace(/^http/, 'ws')
       socket = new WebSocket(socketUrl)
-      socket.onopen = () => { setConnected(true); setMockMode(false) }
+      socket.onopen = () => {
+        setConnected(true)
+        setMockMode(false)
+        void api.incidentSnapshot()
+          .then((snapshot) => snapshot.items.forEach((incident) => handleIncident(incident)))
+          .catch((error: unknown) => console.error('Incident snapshot synchronization failed', error))
+      }
       socket.onmessage = (event) => {
         const message = JSON.parse(event.data) as { event: string; data: Incident }
         if (message.event === 'incident.created') handleIncident(message.data, true)
-        if (message.event === 'incident.updated') handleIncident(message.data)
+        if (message.event === 'incident.updated' || message.event === 'workflow.updated') handleIncident(message.data)
       }
       socket.onclose = () => {
         setConnected(false)
