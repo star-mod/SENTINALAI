@@ -1,9 +1,14 @@
 import argparse
+import os
 import random
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 
 import requests
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 
 TYPES = ("physical_altercation", "fall_collapse", "abnormal_crowd_movement")
@@ -34,7 +39,9 @@ def main() -> None:
             "verification": {"window_seconds": 2.5, "frames_confirmed": 36, "frames_required": 25},
         }
         try:
-            response = requests.post(f"{args.base_url}/api/internal/incidents", json=payload, timeout=5)
+            token = os.getenv("INTERNAL_INGEST_TOKEN")
+            headers = {"X-Internal-Token": token} if token else {}
+            response = requests.post(f"{args.base_url}/api/internal/incidents", json=payload, headers=headers, timeout=5)
             response.raise_for_status()
             print(f"Posted {response.json()['id']} ({incident_type})")
         except requests.RequestException as error:

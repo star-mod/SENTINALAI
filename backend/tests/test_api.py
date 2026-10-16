@@ -8,6 +8,22 @@ from app.models import Incident as IncidentModel
 from app.services.incident_service import severity_for, validate_transition
 
 
+def internal_incident_payload():
+    return {
+        "camera_id": "cam_01",
+        "camera_name": "Central Plaza - North",
+        "location": {"lat": 12.9716, "lng": 77.5946, "label": "Central Plaza"},
+        "type": "fall_collapse",
+        "confidence": 0.93,
+        "severity": "high",
+        "timestamp": "2026-10-11T12:00:00Z",
+        "snapshot_url": "/media/snapshots/ingest.jpg",
+        "clip_url": "/api/incident-video/fall_collapse",
+        "notes": "AI ingest validation",
+        "verification": {"window_seconds": 2.5, "frames_confirmed": 40, "frames_required": 25},
+    }
+
+
 @pytest.mark.parametrize(("confidence", "expected"), [(0.69, "low"), (0.70, "medium"), (0.84, "medium"), (0.85, "high")])
 def test_severity_thresholds(confidence, expected):
     assert severity_for(confidence) == expected
@@ -78,21 +94,10 @@ def test_camera_crud_round_trip():
         assert delete_response.status_code == 204
 
 
-def test_ai_ingest_creates_incident_and_evidence():
+def test_ai_ingest_creates_incident_and_evidence(monkeypatch):
+    monkeypatch.setenv("INTERNAL_INGEST_TOKEN", "test-ingest-token")
     with TestClient(app) as client:
-        response = client.post("/api/internal/incidents", json={
-            "camera_id": "cam_01",
-            "camera_name": "Central Plaza - North",
-            "location": {"lat": 12.9716, "lng": 77.5946, "label": "Central Plaza"},
-            "type": "fall_collapse",
-            "confidence": 0.93,
-            "severity": "high",
-            "timestamp": "2026-10-11T12:00:00Z",
-            "snapshot_url": "/media/snapshots/ingest.jpg",
-            "clip_url": "/api/incident-video/fall_collapse",
-            "notes": "AI ingest validation",
-            "verification": {"window_seconds": 2.5, "frames_confirmed": 40, "frames_required": 25}
-        })
+        response = client.post("/api/internal/incidents", json=internal_incident_payload(), headers={"X-Internal-Token": "test-ingest-token"})
         assert response.status_code == 201, response.text
         incident = response.json()
         assert incident["camera_id"] == "cam_01"
@@ -110,3 +115,24 @@ def test_ai_ingest_creates_incident_and_evidence():
         list_response = client.get(f"/api/incidents/{incident['id']}/evidence")
         assert list_response.status_code == 200
         assert any(item["id"] == evidence["id"] for item in list_response.json())
+
+
+def test_internal_ingest_rejects_missing_token(monkeypatch):
+    monkeypatch.setenv("INTERNAL_INGEST_TOKEN", "test-ingest-token")
+    with TestClient(app) as client:
+        response = client.post("/api/internal/incidents", json=internal_incident_payload())
+    assert response.status_code == 401
+
+
+def test_internal_ingest_rejects_invalid_token(monkeypatch):
+    monkeypatch.setenv("INTERNAL_INGEST_TOKEN", "test-ingest-token")
+    with TestClient(app) as client:
+        response = client.post("/api/internal/incidents", json=internal_incident_payload(), headers={"X-Internal-Token": "wrong-token"})
+    assert response.status_code == 401
+
+
+def test_internal_ingest_fails_closed_when_token_is_unset(monkeypatch):
+    monkeypatch.delenv("INTERNAL_INGEST_TOKEN", raising=False)
+    with TestClient(app) as client:
+        response = client.post("/api/internal/incidents", json=internal_incident_payload(), headers={"X-Internal-Token": "test-ingest-token"})
+    assert response.status_code == 401

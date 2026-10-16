@@ -5,6 +5,7 @@ Features resilient offline fallbacks and camera-level fault isolation.
 """
 
 import math
+import logging
 import os
 import threading
 import time
@@ -18,6 +19,74 @@ from sentinel_ai.detectors.base import BaseDetector, DetectorRegistry, FrameStat
 import sentinel_ai.detectors  # Ensure all detectors register
 from sentinel_ai.evidence import CameraRingBuffer, draw_annotations
 from sentinel_ai.frame_hub import FrameHub
+
+
+logger = logging.getLogger(__name__)
+N8N_WEBHOOK_TIMEOUT_SECONDS = 5.0
+
+
+def build_incident_payload(
+    detection: Detection,
+    camera_name: str,
+    location: Dict[str, Any],
+    snapshot_url: str,
+    clip_url: str,
+) -> Dict[str, Any]:
+    """Map a temporally confirmed detection and generated evidence to the ingest contract."""
+    return {
+        "camera_id": detection.camera_id,
+        "camera_name": camera_name,
+        "location": location,
+        "type": detection.incident_type,
+        "confidence": detection.confidence,
+        "severity": detection.severity,
+        "timestamp": detection.timestamp,
+        "snapshot_url": snapshot_url,
+        "clip_url": clip_url,
+        "notes": detection.description,
+        "verification": detection.verification,
+    }
+
+
+def send_incident_to_n8n(
+    payload: Dict[str, Any],
+    webhook_url: Optional[str],
+    webhook_secret: Optional[str],
+) -> bool:
+    """Deliver one confirmed incident; report failure without logging payloads or secrets."""
+    if not webhook_url:
+        logger.error(
+            "N8N webhook delivery skipped: N8N_WEBHOOK_URL is not configured (camera=%s type=%s)",
+            payload.get("camera_id", "unknown"),
+            payload.get("type", "unknown"),
+        )
+        return False
+
+    if not webhook_secret:
+        logger.error(
+            "N8N webhook delivery skipped: N8N_WEBHOOK_SECRET is not configured (camera=%s type=%s)",
+            payload.get("camera_id", "unknown"),
+            payload.get("type", "unknown"),
+        )
+        return False
+
+    try:
+        response = requests.post(
+            webhook_url,
+            json=payload,
+            headers={"X-Webhook-Secret": webhook_secret},
+            timeout=N8N_WEBHOOK_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+        return True
+    except requests.RequestException as error:
+        logger.warning(
+            "N8N webhook delivery failed (camera=%s type=%s error=%s)",
+            payload.get("camera_id", "unknown"),
+            payload.get("type", "unknown"),
+            type(error).__name__,
+        )
+        return False
 
 
 class VisionTracker:
@@ -190,7 +259,7 @@ class CameraWorker(threading.Thread):
         self.running = False
 
         self.target_fps = float(pipeline_cfg.get("target_fps", 15.0))
-        self.api_url = pipeline_cfg.get("api_url", "http://localhost:8000/api/internal/incidents")
+        self.webhook_url = os.getenv("N8N_WEBHOOK_URL")
         self.cooldown_sec = float(pipeline_cfg.get("cooldown_seconds", 20.0))
 
         # Register camera in FrameHub
@@ -347,7 +416,7 @@ class CameraWorker(threading.Thread):
         annotated_frame: np.ndarray,
         trigger_time: float
     ):
-        """Generates evidence snapshots/clips and submits to API server."""
+        """Generate evidence and submit the confirmed candidate to the n8n webhook."""
         ts_slug = int(time.time() * 1000) % 100000
         incident_id = f"inc_{self.camera_id}_{ts_slug:05d}"
 
@@ -369,19 +438,13 @@ class CameraWorker(threading.Thread):
         loc = self.camera_cfg.get("location", {"lat": 12.9716, "lng": 77.5946, "label": "Security Zone"})
 
         # Build Incident Payload strictly matching Shared Contract
-        payload = {
-            "camera_id": self.camera_id,
-            "camera_name": self.camera_name,
-            "location": loc,
-            "type": detection.incident_type,
-            "confidence": detection.confidence,
-            "severity": detection.severity,
-            "timestamp": detection.timestamp,
-            "snapshot_url": snapshot_url,
-            "clip_url": clip_url,
-            "notes": detection.description,
-            "verification": detection.verification,
-        }
+        payload = build_incident_payload(
+            detection=detection,
+            camera_name=self.camera_name,
+            location=loc,
+            snapshot_url=snapshot_url,
+            clip_url=clip_url,
+        )
 
         # If an in-process callback is provided, invoke it immediately
         if self.incident_callback:
@@ -390,12 +453,13 @@ class CameraWorker(threading.Thread):
             except Exception as cb_err:
                 pass
 
-        # Also dispatch via HTTP to internal API endpoint
+        # Dispatch one confirmed detection; cooldown is local, not persistent deduplication.
         def _post_async():
-            try:
-                requests.post(self.api_url, json=payload, timeout=2.5)
-            except Exception:
-                pass  # Graceful fallback if backend is momentarily restarting
+            send_incident_to_n8n(
+                payload=payload,
+                webhook_url=self.webhook_url,
+                webhook_secret=os.getenv("N8N_WEBHOOK_SECRET"),
+            )
 
         threading.Thread(target=_post_async, daemon=True).start()
 

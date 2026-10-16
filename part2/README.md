@@ -212,7 +212,7 @@ python test_e2e.py
 - `PATCH  /api/incidents/{id}` — Update status (`acknowledged`, `resolved`) or operator notes.
 - `GET    /api/stats` — Incident counts by type, status, hour, and camera.
 - `POST   /api/simulate` — Trigger deterministic incident drill for live demos.
-- `POST   /api/internal/incidents` — CV pipeline event ingress.
+- `POST   /api/internal/incidents` — CV pipeline event ingress; requires `X-Internal-Token` matching the backend `INTERNAL_INGEST_TOKEN` environment setting.
 - `GET    /api/stream/{camera_id}` — MJPEG live stream with bounding boxes and pose overlay.
 - `GET    /media/...` — Static snapshot JPEGs and MP4 clips.
 - `WS     /ws/incidents` — Broadcasts `{ "event": "incident.created" | "incident.updated", "data": <Incident> }`.

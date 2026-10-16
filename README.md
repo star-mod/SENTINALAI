@@ -26,6 +26,20 @@ python -m uvicorn app.main:app --reload --port 8000
 
 The API creates its SQLite database, four cameras, six historical incidents, and local placeholder snapshots/clips under `backend/`. OpenAPI is at `http://localhost:8000/docs`. The pipeline is disabled by default. To run the existing pipeline without modifying it, install `../part2/requirements.txt` while in `backend/`, then set `ENABLE_PIPELINE=true` in `backend/.env`; the API imports its `PipelineManager` with the existing `part2/sentinel_ai` configuration.
 
+Set `INTERNAL_INGEST_TOKEN` in `backend/.env` to a long random value before using direct backend ingestion. `POST /api/internal/incidents` requires that value in the `X-Internal-Token` header. For CV-to-n8n delivery, explicitly set `N8N_WEBHOOK_URL` and `N8N_WEBHOOK_SECRET` in `backend/.env`; the pipeline sends the secret in `X-Webhook-Secret` and skips delivery if either setting is absent. No webhook destination is hardcoded as a fallback. Replace placeholders from `backend/.env.example`; do not use them as credentials. If running the CV pipeline outside the backend process, make the same variables available in that process environment.
+
+The CV pipeline posts only when a detector produces a temporally confirmed detection and both n8n settings are configured. It first writes the snapshot and schedules the clip using its existing ring buffer, then maps those generated `/media/...` URLs into the webhook payload. Existing detector cooldowns remain in effect. Failed webhook delivery is reported to the pipeline log without logging the secret or request body; no automatic retry is performed because the ingestion path has no verified idempotency key.
+
+### Optional local gateway for n8n Cloud
+
+Keep the backend running on port 8000. In a second terminal, start the narrow local gateway from the `backend/` directory:
+
+```powershell
+python -m uvicorn app.local_gateway:app --host 127.0.0.1 --port 8001 --no-access-log
+```
+
+The gateway accepts only `POST /api/internal/incidents` and forwards it to the backend on port 8000, including the `X-Internal-Token` header. Point a separately configured Cloudflare Tunnel at `http://127.0.0.1:8001` and give n8n the tunneled webhook URL. Stop the gateway with Ctrl+C in its terminal. Stop the backend separately in its own terminal. The gateway does not replace the backend token check.
+
 Camera clips are read from the ignored local folder `data/videos/` first, with existing `part2/data/videos/` files as fallback. The separately acquired research footage is not committed or redistributed. Check `part2/data/videos/SOURCES.md` for provenance and usage conditions before using or sharing any downloaded clip.
 
 In a second terminal:
@@ -58,7 +72,7 @@ curl.exe http://localhost:8000/api/incidents/inc_0001
 curl.exe -X PATCH http://localhost:8000/api/incidents/inc_0001 -H "Content-Type: application/json" -d "{`"status`":`"acknowledged`",`"notes`":`"Operator reviewing evidence`"}"
 curl.exe http://localhost:8000/api/stats
 curl.exe -X POST http://localhost:8000/api/simulate -H "Content-Type: application/json" -d "{`"type`":`"fall_collapse`",`"camera_id`":`"cam_01`"}"
-curl.exe -X POST http://localhost:8000/api/internal/incidents -H "Content-Type: application/json" -d "{`"camera_id`":`"cam_01`",`"camera_name`":`"Central Plaza - North`",`"location`":{`"lat`":12.9716,`"lng`":77.5946,`"label`":`"Central Plaza`"},`"type`":`"fall_collapse`",`"confidence`":0.91,`"timestamp`":`"2026-10-10T10:00:00Z`",`"snapshot_url`":`"/media/snapshots/cam_01_fall_collapse.jpg`",`"clip_url`":`"/media/clips/cam_01_fall_collapse.mp4`",`"verification`":{`"window_seconds`":2.5,`"frames_confirmed`":38,`"frames_required`":30}}"
+curl.exe -X POST http://localhost:8000/api/internal/incidents -H "Content-Type: application/json" -H "X-Internal-Token: <configured-token>" -d "{`"camera_id`":`"cam_01`",`"camera_name`":`"Central Plaza - North`",`"location`":{`"lat`":12.9716,`"lng`":77.5946,`"label`":`"Central Plaza`"},`"type`":`"fall_collapse`",`"confidence`":0.91,`"timestamp`":`"2026-10-10T10:00:00Z`",`"snapshot_url`":`"/media/snapshots/cam_01_fall_collapse.jpg`",`"clip_url`":`"/media/clips/cam_01_fall_collapse.mp4`",`"verification`":{`"window_seconds`":2.5,`"frames_confirmed`":38,`"frames_required`":30}}"
 curl.exe http://localhost:8000/api/stream/cam_01
 ```
 

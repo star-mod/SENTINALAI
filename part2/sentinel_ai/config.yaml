@@ -3,7 +3,6 @@ pipeline:
   ring_buffer_seconds: 10
   device: "auto"
   model_name: "yolov8n-pose.pt"
-  api_url: "http://localhost:8000/api/internal/incidents"
   cooldown_seconds: 20.0
 
 detectors:

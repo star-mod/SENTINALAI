@@ -1,11 +1,12 @@
 import json
+import hmac
 import logging
 import os
 import random
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -24,6 +25,14 @@ from app.services.ws_manager import ws_manager
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api")
+
+
+def verify_internal_ingest_token(x_internal_token: str | None = Header(default=None)) -> None:
+    expected_token = os.getenv("INTERNAL_INGEST_TOKEN")
+    if not expected_token or not x_internal_token:
+        raise HTTPException(status_code=401, detail="Invalid internal token")
+    if not hmac.compare_digest(x_internal_token.encode("utf-8"), expected_token.encode("utf-8")):
+        raise HTTPException(status_code=401, detail="Invalid internal token")
 
 
 def _camera_to_contract(camera: Camera) -> dict:
@@ -227,7 +236,7 @@ def _create_incident(db: Session, payload: dict) -> dict:
     return as_contract(row)
 
 
-@router.post("/internal/incidents", response_model=IncidentSchema, status_code=201)
+@router.post("/internal/incidents", response_model=IncidentSchema, status_code=201, dependencies=[Depends(verify_internal_ingest_token)])
 async def create_internal_incident(body: InternalIncident, db: Session = Depends(get_db)):
     payload = body.model_dump(exclude_none=True)
     camera = camera_or_404(db, payload["camera_id"])
