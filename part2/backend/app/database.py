@@ -337,7 +337,7 @@ class Database:
             rows = conn.execute("SELECT * FROM incidents ORDER BY timestamp ASC").fetchall()
 
             total = len(rows)
-            by_type = {"physical_altercation": 0, "fall_collapse": 0, "abnormal_crowd_movement": 0}
+            by_type = {"physical_altercation": 0, "fall_collapse": 0, "abnormal_crowd_movement": 0, "vehicle_accident": 0}
             by_status = {"new": 0, "acknowledged": 0, "resolved": 0}
             cam_counts: Dict[str, Dict[str, Any]] = {}
             hour_counts: Dict[str, int] = {}

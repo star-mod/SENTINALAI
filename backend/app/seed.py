@@ -15,7 +15,7 @@ CAMERAS = [
     ("cam_03", "Stadium Gate 4 - Entry Plaza", 12.9698, 77.5890, "Stadium Gate 4"),
     ("cam_04", "Financial District - Main Arcade", 12.9752, 77.5912, "Financial District"),
 ]
-TYPES = ("physical_altercation", "fall_collapse", "abnormal_crowd_movement")
+TYPES = ("physical_altercation", "fall_collapse", "abnormal_crowd_movement", "vehicle_accident")
 SEED_COUNT = 6
 SEED_NOTES = {"Historical demo record", "Verified event for operator review"}
 

@@ -21,16 +21,17 @@ const nav: Array<{ name: Page; icon: typeof Activity }> = [
   { name: 'Analytics', icon: ArrowUpRight }, { name: 'Settings', icon: Settings2 },
 ]
 const typeLabel: Record<IncidentType, string> = {
-  physical_altercation: 'Physical altercation', fall_collapse: 'Fall / collapse', abnormal_crowd_movement: 'Abnormal crowd movement',
+  physical_altercation: 'Physical altercation', fall_collapse: 'Fall / collapse', abnormal_crowd_movement: 'Abnormal crowd movement', vehicle_accident: 'Vehicle accident',
 }
 const typeIcon: Record<IncidentType, typeof Activity> = {
-  physical_altercation: Siren, fall_collapse: AlertTriangle, abnormal_crowd_movement: Activity,
+  physical_altercation: Siren, fall_collapse: AlertTriangle, abnormal_crowd_movement: Activity, vehicle_accident: AlertTriangle,
 }
-const colorType = { physical_altercation: '#ef5b65', fall_collapse: '#f4b45f', abnormal_crowd_movement: '#45d4c1' }
+const colorType = { physical_altercation: '#ef5b65', fall_collapse: '#f4b45f', abnormal_crowd_movement: '#45d4c1', vehicle_accident: '#91a8ff' }
 const committeeFor: Record<IncidentType, string> = {
   physical_altercation: 'Security Response Committee',
   fall_collapse: 'Medical Response Committee',
   abnormal_crowd_movement: 'Crowd Safety Committee',
+  vehicle_accident: 'Traffic Safety Committee',
 }
 
 function relativeTime(value: string) {
@@ -46,7 +47,7 @@ function mockStats(incidents: Incident[]): Stats {
     const at = new Date(now.getTime() - (23 - index) * 3_600_000)
     return { hour: `${String(at.getHours()).padStart(2, '0')}:00`, count: incidents.filter((item) => new Date(item.timestamp).getHours() === at.getHours()).length }
   })
-  const by_type = { physical_altercation: 0, fall_collapse: 0, abnormal_crowd_movement: 0 }
+  const by_type = { physical_altercation: 0, fall_collapse: 0, abnormal_crowd_movement: 0, vehicle_accident: 0 }
   const by_status = { new: 0, acknowledged: 0, resolved: 0 }
   incidents.forEach((item) => { by_type[item.type]++; by_status[item.status]++ })
   return { total: incidents.length, by_type, by_status, by_hour: hours, by_camera: mockCameras.map((camera) => ({ camera_id: camera.id, name: camera.name, count: incidents.filter((item) => item.camera_id === camera.id).length })) }
@@ -300,7 +301,7 @@ function AnalyticsView({ stats, incidents }: { stats: Stats | null; incidents: I
 }
 
 function SettingsView({ sound, setSound }: { sound: boolean; setSound: (value: boolean) => void }) {
-  const [enabled, setEnabled] = useState<Record<IncidentType, boolean>>({ physical_altercation: true, fall_collapse: true, abnormal_crowd_movement: true })
+  const [enabled, setEnabled] = useState<Record<IncidentType, boolean>>({ physical_altercation: true, fall_collapse: true, abnormal_crowd_movement: true, vehicle_accident: true })
   const [threshold, setThreshold] = useState(70)
   return <div className="settings-view"><section className="settings-panel"><div className="settings-section-title"><div><h3>Detection categories</h3><p>Session controls · changes are local to this dashboard</p></div><span className="ui-only-label">UI CONTROL</span></div><div className="detection-options">{(Object.keys(typeLabel) as IncidentType[]).map((type) => { const Icon = typeIcon[type]; return <button key={type} className={`detection-option ${enabled[type] ? 'enabled' : ''}`} onClick={() => setEnabled((old) => ({ ...old, [type]: !old[type] }))}><span className={`incident-type-icon ${type}`}><Icon size={16} /></span><span><strong>{typeLabel[type]}</strong><small>Temporal verification required</small></span><span className={`ready-chip ${enabled[type] ? 'ready' : ''}`}>{enabled[type] ? 'READY' : 'PAUSED'}</span></button> })}</div></section><section className="settings-panel"><div className="settings-section-title"><div><h3>Alert threshold</h3><p>Minimum confidence displayed as an operator alert</p></div><span className="threshold-number">{threshold}%</span></div><input className="threshold-slider" type="range" min="50" max="95" value={threshold} onChange={(event) => setThreshold(Number(event.target.value))} /><div className="range-labels"><span>50% · MORE SENSITIVE</span><span>95% · HIGHER CONFIDENCE</span></div></section><section className="settings-panel sound-setting"><div className="settings-section-title"><div><h3>Audible alerts</h3><p>Play a four-pulse buzzer for a new high-severity event</p></div><button className={`switch ${sound ? 'on' : ''}`} onClick={() => setSound(!sound)} aria-label="Toggle audible alerts"><i /></button></div></section><div className="privacy-note"><Shield size={17} /><span><strong>Privacy guardrails are always on</strong><small>No facial recognition or identity features. Operators remain responsible for every response.</small></span><Check size={16} /></div></div>
 }

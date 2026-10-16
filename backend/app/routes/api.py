@@ -394,7 +394,7 @@ def stats(db: Session = Depends(get_db)):
     now = datetime.now(timezone.utc)
     start = now.replace(minute=0, second=0, microsecond=0) - timedelta(hours=23)
     by_hour = {(start + timedelta(hours=index)).strftime("%H:00"): 0 for index in range(24)}
-    by_type = {key: 0 for key in ("physical_altercation", "fall_collapse", "abnormal_crowd_movement")}
+    by_type = {key: 0 for key in ("physical_altercation", "fall_collapse", "abnormal_crowd_movement", "vehicle_accident")}
     by_status = {key: 0 for key in ("new", "acknowledged", "resolved")}
     by_camera = {cam.id: {"camera_id": cam.id, "name": cam.name, "count": 0} for cam in cameras_rows}
     for row in rows:
@@ -575,7 +575,7 @@ def camera_stream(camera_id: str, db: Session = Depends(get_db)):
 
 @router.get("/incident-video/{incident_type}")
 def incident_video(incident_type: str):
-    camera_id = {"fall_collapse": "cam_01", "physical_altercation": "cam_02", "abnormal_crowd_movement": "cam_03"}.get(incident_type)
+    camera_id = {"fall_collapse": "cam_01", "physical_altercation": "cam_02", "abnormal_crowd_movement": "cam_03", "vehicle_accident": "cam_04"}.get(incident_type)
     if camera_id is None:
         raise HTTPException(status_code=404, detail="Incident video not found")
     video = video_source(camera_id)

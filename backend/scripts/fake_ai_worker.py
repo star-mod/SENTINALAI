@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 import requests
 
 
-TYPES = ("physical_altercation", "fall_collapse", "abnormal_crowd_movement")
+TYPES = ("physical_altercation", "fall_collapse", "abnormal_crowd_movement", "vehicle_accident")
 CAMERAS = {
     "cam_01": ("Central Plaza - North", {"lat": 12.9716, "lng": 77.5946, "label": "Central Plaza"}),
     "cam_02": ("Metro Transit Hub - East Concourse", {"lat": 12.9780, "lng": 77.6005, "label": "Transit Hub"}),

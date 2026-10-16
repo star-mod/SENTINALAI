@@ -31,12 +31,12 @@ def _ensure_demo_media() -> None:
         import numpy as np
         from app.services.stream_service import placeholder_jpeg
         for camera_id in ("cam_01", "cam_02", "cam_03", "cam_04"):
-            for incident_type in ("fall_collapse", "physical_altercation", "abnormal_crowd_movement"):
+            for incident_type in ("fall_collapse", "physical_altercation", "abnormal_crowd_movement", "vehicle_accident"):
                 image_path = root / "snapshots" / f"{camera_id}_{incident_type}.jpg"
                 if not image_path.exists():
                     image_path.write_bytes(placeholder_jpeg("DEMO EVIDENCE"))
         for camera_id in ("cam_01", "cam_02", "cam_03", "cam_04"):
-            for incident_type in ("fall_collapse", "physical_altercation", "abnormal_crowd_movement"):
+            for incident_type in ("fall_collapse", "physical_altercation", "abnormal_crowd_movement", "vehicle_accident"):
                 clip_path = root / "clips" / f"{camera_id}_{incident_type}.mp4"
                 if clip_path.exists():
                     continue

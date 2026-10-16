@@ -11,7 +11,7 @@ const sites = [
   { id: 'cam_03', name: 'Stadium Gate 4 - Entry Plaza', location: { lat: 12.9698, lng: 77.589, label: 'Stadium Gate 4' } },
   { id: 'cam_04', name: 'Financial District - Main Arcade', location: { lat: 12.9752, lng: 77.5912, label: 'Financial District' } },
 ]
-const types: IncidentType[] = ['physical_altercation', 'fall_collapse', 'abnormal_crowd_movement']
+const types: IncidentType[] = ['physical_altercation', 'fall_collapse', 'abnormal_crowd_movement', 'vehicle_accident']
 
 export const mockCameras: Camera[] = sites.map((site) => ({ ...site, status: 'online', stream_url: `/api/stream/${site.id}` }))
 export function makeMockIncidents(): Incident[] {

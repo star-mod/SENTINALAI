@@ -26,7 +26,8 @@ export function useIncidentsSocket() {
       setMockMode(true)
       generatorTimer = window.setInterval(() => {
         const cameraId = `cam_0${1 + Math.floor(Math.random() * 4)}`
-        const type = (['physical_altercation', 'fall_collapse', 'abnormal_crowd_movement'] as IncidentType[])[Math.floor(Math.random() * 3)]
+        const types: IncidentType[] = ['physical_altercation', 'fall_collapse', 'abnormal_crowd_movement', 'vehicle_accident']
+        const type = types[Math.floor(Math.random() * types.length)]
         handleIncident(createMockIncident(type, cameraId), true)
       }, 60_000)
       return () => window.clearInterval(generatorTimer)

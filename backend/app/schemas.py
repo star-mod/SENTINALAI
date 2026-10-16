@@ -6,7 +6,7 @@ from urllib.parse import urlsplit
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
-IncidentType = Literal["physical_altercation", "fall_collapse", "abnormal_crowd_movement"]
+IncidentType = Literal["physical_altercation", "fall_collapse", "abnormal_crowd_movement", "vehicle_accident"]
 IncidentStatus = Literal["new", "acknowledged", "resolved"]
 Severity = Literal["low", "medium", "high"]
 Priority = Literal["high", "medium", "uncertain", "normal"]
@@ -23,7 +23,7 @@ def _evidence_url(value: str, *, allow_clip: bool = False) -> str:
     safe_snapshot = re.fullmatch(r"/media/snapshots/[A-Za-z0-9_-]+\.(?:jpg|jpeg|png|webp)", value)
     safe_clip = re.fullmatch(r"/media/clips/[A-Za-z0-9_-]+\.mp4", value)
     safe_video = re.fullmatch(
-        r"/api/incident-video/(?:physical_altercation|fall_collapse|abnormal_crowd_movement)",
+        r"/api/incident-video/(?:physical_altercation|fall_collapse|abnormal_crowd_movement|vehicle_accident)",
         value,
     )
     accepted = bool(safe_snapshot or (allow_clip and (safe_clip or safe_video)))

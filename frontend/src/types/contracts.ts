@@ -1,4 +1,4 @@
-export type IncidentType = 'physical_altercation' | 'fall_collapse' | 'abnormal_crowd_movement'
+export type IncidentType = 'physical_altercation' | 'fall_collapse' | 'abnormal_crowd_movement' | 'vehicle_accident'
 export type IncidentStatus = 'new' | 'acknowledged' | 'resolved'
 export type Severity = 'low' | 'medium' | 'high'
 export type IncidentSource = 'ai_detection' | 'simulation'

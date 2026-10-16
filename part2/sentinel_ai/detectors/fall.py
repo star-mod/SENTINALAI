@@ -12,9 +12,9 @@ from sentinel_ai.detectors.base import BaseDetector, FrameState, Detection, Dete
 class FallDetector(BaseDetector):
     def __init__(self, camera_id: str, config: Dict[str, Any]):
         super().__init__("fall_collapse", camera_id, config)
-        self.drop_velocity_threshold = float(config.get("drop_velocity_threshold", 0.08))
-        self.aspect_ratio_threshold = float(config.get("aspect_ratio_threshold", 1.1))
-        self.stillness_threshold = float(config.get("stillness_threshold", 0.04))
+        self.drop_velocity_threshold = float(config.get("drop_velocity_threshold", 0.04))
+        self.aspect_ratio_threshold = float(config.get("aspect_ratio_threshold", 0.9))
+        self.stillness_threshold = float(config.get("stillness_threshold", 0.06))
 
         # Track confirmation counts per track_id: track_id -> int
         self.track_confirmed_frames: Dict[int, int] = {}
@@ -68,14 +68,13 @@ class FallDetector(BaseDetector):
         }
 
     def analyze(self, current_frame: FrameState) -> Optional[Detection]:
-        if len(self.history) < 3:
+        if len(self.history) < 2:
             return None
 
         # Clean stale track records
         current_track_ids = set(current_frame.tracks.keys())
         for tid in list(self.track_confirmed_frames.keys()):
             if tid not in current_track_ids:
-                # Decrement or remove if lost
                 self.track_confirmed_frames[tid] = max(0, self.track_confirmed_frames[tid] - 1)
                 if self.track_confirmed_frames[tid] == 0:
                     self.track_confirmed_frames.pop(tid, None)
@@ -84,46 +83,49 @@ class FallDetector(BaseDetector):
         for track_id, track in current_frame.tracks.items():
             curr_metrics = self._extract_posture_metrics(track)
 
-            # Look back in history to detect rapid vertical drop
+            # 1. INSTANT TRIGGER (Safety Net): Extremely prone posture
+            # If a person is suddenly very flat, trigger immediately regardless of history
+            if curr_metrics["aspect_ratio"] > 1.5 or curr_metrics["horizontal_torso"] > 0.8:
+                return self.create_detection(
+                    incident_type="fall_collapse",
+                    confidence=0.85,
+                    track_ids=[track_id],
+                    frames_confirmed=self.frames_required,
+                    description=f"Instant fall detection: Extreme prone posture detected on track {track_id}."
+                )
+
+            # 2. TEMPORAL TRIGGER (Existing Logic)
             has_rapid_drop = False
             drop_magnitude = 0.0
 
-            # Inspect earlier frames in the window (e.g. 0.5s - 1.5s ago)
             for prev_frame in self.history[:-2]:
                 if track_id in prev_frame.tracks:
                     prev_track = prev_frame.tracks[track_id]
                     prev_metrics = self._extract_posture_metrics(prev_track)
-
-                    # Downward drop means positive delta in Y (Y increases downwards)
                     dy_hip = curr_metrics["hip_y"] - prev_metrics["hip_y"]
                     dy_center = curr_metrics["center_y"] - prev_metrics["center_y"]
                     dy_head = curr_metrics["head_y"] - prev_metrics["head_y"]
                     max_dy = max(dy_hip, dy_center, dy_head)
-
-                    # Also check sudden decrease in bounding box height (standing -> fallen)
                     dh = prev_metrics["bbox_h"] - curr_metrics["bbox_h"]
 
-                    if max_dy > self.drop_velocity_threshold or dh > 0.12:
+                    if max_dy > self.drop_velocity_threshold or dh > 0.10:
                         has_rapid_drop = True
                         drop_magnitude = max(max_dy, dh)
                         self.track_drop_events[track_id] = (prev_frame.timestamp, drop_magnitude)
                         break
 
-            # Check if track previously had a drop event within this window
             if track_id in self.track_drop_events:
                 drop_ts, drop_mag = self.track_drop_events[track_id]
                 if (current_frame.timestamp - drop_ts) <= self.window_seconds:
                     has_rapid_drop = True
                     drop_magnitude = max(drop_magnitude, drop_mag)
 
-            # Check prone posture: aspect ratio wider, horizontal torso, or very low height
             is_prone = (
                 curr_metrics["aspect_ratio"] >= self.aspect_ratio_threshold
                 or curr_metrics["horizontal_torso"] > 0.5
-                or (curr_metrics["aspect_ratio"] > 0.85 and curr_metrics["bbox_h"] < 0.20)
+                or (curr_metrics["aspect_ratio"] > 0.8 and curr_metrics["bbox_h"] < 0.25)
             )
 
-            # Check stillness: low motion between consecutive frames
             is_still = False
             if len(self.history) >= 2 and track_id in self.history[-2].tracks:
                 last_metrics = self._extract_posture_metrics(self.history[-2].tracks[track_id])
@@ -134,35 +136,27 @@ class FallDetector(BaseDetector):
                 if motion < self.stillness_threshold:
                     is_still = True
 
-            # If dropped and now prone with low motion, increment confirmation counter
-            if has_rapid_drop and is_prone and is_still:
+            if has_rapid_drop and (is_prone or is_still):
                 self.track_confirmed_frames[track_id] = self.track_confirmed_frames.get(track_id, 0) + 1
             elif is_prone and is_still and (track_id in self.track_drop_events):
-                # Still sustained fallen state
                 self.track_confirmed_frames[track_id] = self.track_confirmed_frames.get(track_id, 0) + 1
             else:
-                # Slight decay if conditions not fully met
                 if track_id in self.track_confirmed_frames:
                     self.track_confirmed_frames[track_id] = max(0, self.track_confirmed_frames[track_id] - 1)
 
             confirmed = self.track_confirmed_frames.get(track_id, 0)
-
-            # Temporal verification threshold reached!
             if confirmed >= self.frames_required:
-                # Compute confidence from drop magnitude and confirmation persistence
                 persistence_factor = min(confirmed / float(self.frames_required), 1.5) / 1.5
                 base_conf = 0.75 + min(drop_magnitude * 1.5, 0.15) + (0.10 * persistence_factor)
                 confidence = min(max(base_conf, self.confidence_min), 0.96)
-
                 self.track_confirmed_frames.pop(track_id, None)
                 self.track_drop_events.pop(track_id, None)
-
                 return self.create_detection(
                     incident_type="fall_collapse",
                     confidence=confidence,
                     track_ids=[track_id],
                     frames_confirmed=confirmed,
-                    description=f"Person collapse detected on track {track_id} with sustained horizontal posture ({confirmed} frames confirmed over {self.window_seconds}s window)."
+                    description=f"Person collapse detected on track {track_id} with sustained horizontal posture ({confirmed} frames confirmed)."
                 )
 
         return None

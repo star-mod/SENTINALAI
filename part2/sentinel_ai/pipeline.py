@@ -57,7 +57,7 @@ class VisionTracker:
                 results = self.yolo_model.track(
                     frame,
                     persist=True,
-                    classes=[0],  # Class 0 = Person only
+                    classes=[0, 2, 3, 5, 7],  # Person (0), Car (2), Motorcycle (3), Bus (5), Truck (7)
                     verbose=False,
                     device=self.device,
                     tracker="bytetrack.yaml",
@@ -369,16 +369,24 @@ class CameraWorker(threading.Thread):
         )
 
         loc = self.camera_cfg.get("location", {"lat": 12.9716, "lng": 77.5946, "label": "Security Zone"})
+        if not isinstance(loc, dict):
+            loc = {"lat": 12.9716, "lng": 77.5946, "label": str(loc)}
 
         # Build Incident Payload strictly matching Shared Contract
+        # Stable ID generation: Use a hash of camera, type, track_id, and a time window (e.g., 60s)
+        # This prevents the same accident from triggering multiple alerts across consecutive frames.
+        time_window = int(trigger_time // 60)
+        track_ids_str = ",".join(map(str, sorted(detection.track_ids)))
+        dedup_key = f"{self.camera_id}_{detection.incident_type}_{track_ids_str}_{time_window}"
+
         payload = {
-            "id": incident_id,
             "event_id": event_id,
             "camera_id": self.camera_id,
             "camera_name": self.camera_name,
             "location": loc,
             "type": detection.incident_type,
             "confidence": detection.confidence,
+            "severity": detection.severity,
             "timestamp": detection.timestamp,
             "snapshot_url": snapshot_url,
             "clip_url": clip_url,
@@ -386,11 +394,20 @@ class CameraWorker(threading.Thread):
             "verification": detection.verification,
             "schema_version": "1.0",
             "source": "ai_detection",
+            "priority": detection.severity,
             "detection_metadata": {
+                "track_ids": detection.track_ids,
+                "frames_confirmed": detection.verification.get("frames_confirmed"),
                 "track_count": len(detection.track_ids),
                 "detector": detection.incident_type,
+                "deduplication_key": dedup_key,
             },
         }
+
+        print("\n" + "="*50)
+        print(f"INCIDENT DETECTED: {payload['type']}")
+        print(json.dumps(payload, indent=2))
+        print("="*50 + "\n")
 
         # If an in-process callback is provided, invoke it immediately
         if self.incident_callback:

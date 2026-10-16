@@ -99,11 +99,13 @@ async def simulate_incident(body: SimulateRequest):
         "fall_collapse": "/media/clips/cam_01_fall.mp4",
         "physical_altercation": "/media/clips/cam_02_altercation.mp4",
         "abnormal_crowd_movement": "/media/clips/cam_03_crowd.mp4",
+        "vehicle_accident": "/media/clips/cam_04_accident.mp4",
     }
     snapshot_map = {
         "fall_collapse": "/media/snapshots/cam_01_fall.jpg",
         "physical_altercation": "/media/snapshots/cam_02_altercation.jpg",
         "abnormal_crowd_movement": "/media/snapshots/cam_03_crowd.jpg",
+        "vehicle_accident": "/media/snapshots/cam_04_accident.jpg",
     }
 
     simulated_data = {
