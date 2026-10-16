@@ -4,6 +4,7 @@ computes Farneback optical flow, and evaluates temporal safety detectors.
 Features resilient offline fallbacks and camera-level fault isolation.
 """
 
+import logging
 import math
 import os
 import threading
@@ -17,6 +18,8 @@ import yaml
 
 from sentinel_ai.detectors.base import BaseDetector, DetectorRegistry, FrameState, TrackState, Detection
 import sentinel_ai.detectors  # Ensure all detectors register
+
+logger = logging.getLogger(__name__)
 from sentinel_ai.evidence import CameraRingBuffer, draw_annotations
 from sentinel_ai.frame_hub import FrameHub
 
@@ -418,16 +421,19 @@ class CameraWorker(threading.Thread):
 
         # Also dispatch via HTTP to internal API endpoint
         def _post_async():
-            try:
-                token = os.getenv("INTERNAL_API_TOKEN", "local-dev-internal-token")
-                requests.post(
-                    self.api_url,
-                    json=payload,
-                    timeout=2.5,
-                    headers={"Authorization": f"Bearer {token}"},
-                )
-            except Exception:
-                pass  # Graceful fallback if backend is momentarily restarting
+            token = os.getenv("INTERNAL_API_TOKEN", "local-dev-internal-token")
+            for attempt in range(4):
+                try:
+                    r = requests.post(self.api_url, json=payload, timeout=5,
+                                      headers={"Authorization": f"Bearer {token}"})
+                    if r.status_code < 500:
+                        if r.status_code >= 400:
+                            logger.error("Incident POST rejected: %s %s", r.status_code, r.text[:200])
+                        return
+                except Exception as exc:
+                    logger.warning("Incident POST attempt %d failed: %s", attempt + 1, exc)
+                time.sleep(2 ** attempt)
+            logger.error("Incident POST gave up after 4 attempts")
 
         threading.Thread(target=_post_async, daemon=True).start()
 
