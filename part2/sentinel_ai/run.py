@@ -55,7 +55,9 @@ def simulate_incident(camera_id: str, api_url: str):
 
     try:
         print(f"[SentinelAI Simulation] Sending payload to {api_url}...")
-        response = requests.post(api_url, json=payload, timeout=5)
+        token = os.getenv("INTERNAL_API_TOKEN", "local-dev-internal-token")
+        response = requests.post(api_url, json=payload, timeout=5,
+                                 headers={"Authorization": f"Bearer {token}"})
         print(f"[SentinelAI Simulation] Response: {response.status_code} - {response.text}")
     except Exception as e:
         print(f"[SentinelAI Simulation] Error: {e}")
