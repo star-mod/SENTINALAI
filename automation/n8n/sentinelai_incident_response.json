@@ -1,0 +1,86 @@
+{
+  "name": "SentinelAI - Incident Ingestion",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "sentinelai-incident",
+        "authentication": "headerAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "537d8785-83ab-4210-b4fe-41ba5e89d001",
+      "name": "Webhook",
+      "webhookId": "f2a217ca-82cd-4fe3-a59b-c6b78475cbb2",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "7KgAkUV8vH2pxhyp",
+          "name": "Header Auth account 4"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR_BACKEND_HOST/api/internal/incidents",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Internal-Token",
+              "value": "REPLACE_WITH_INTERNAL_INGEST_TOKEN"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.body ?? $json }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        224,
+        0
+      ],
+      "id": "f39bec94-022c-4a69-8e3e-21ce6214e9f3",
+      "name": "HTTP Request"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "89b1d636-d03d-4124-90a1-5bb7930d1ecb",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "45dfba82cb14f63ff27598127083308afab3975f20ba307fc2d731fe1c2f7ead"
+  },
+  "nodeGroups": [],
+  "id": "j26XNVNvCCvdA46r",
+  "tags": []
+}
