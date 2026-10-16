@@ -11,10 +11,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.database import Base, SessionLocal, engine, media_root
+from app.migrations import migrate_database
 from app import models
 from app.routes.api import router
 from app.seed import seed_database
 from app.services.ws_manager import ws_manager
+from app.services.workflow_service import dispatch_worker
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -90,14 +92,33 @@ def _start_pipeline_if_enabled():
         return None
 
 
+def _validate_production_secrets() -> None:
+    if os.getenv("APP_ENV", "development").lower() not in {"production", "prod"}:
+        return
+    required = ("INTERNAL_API_TOKEN", "APP_DASHBOARD_TOKEN", "APP_ADMIN_PASSWORD")
+    if any(len(os.getenv(name, "")) < 32 for name in required):
+        raise RuntimeError("Production requires configured credentials of at least 32 characters")
+    if os.getenv("N8N_ENABLED", "false").lower() == "true" and (
+        not os.getenv("N8N_WEBHOOK_URL", "").strip()
+        or not os.getenv("N8N_WEBHOOK_SECRET", "").strip()
+    ):
+        raise RuntimeError("Production n8n dispatch requires a webhook URL and secret")
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    _validate_production_secrets()
     Base.metadata.create_all(bind=engine)
+    migrate_database(engine)
     _ensure_demo_media()
     with SessionLocal() as db:
         seed_database(db)
+    dispatcher_stop = asyncio.Event()
+    dispatcher_task = asyncio.create_task(dispatch_worker(dispatcher_stop))
     pipeline = _start_pipeline_if_enabled()
     yield
+    dispatcher_stop.set()
+    await dispatcher_task
     if pipeline is not None:
         try:
             pipeline.stop()
@@ -106,11 +127,13 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="SentinelAI Control API", version="1.0.0", description="Evidence-backed safety incident API for authorized feeds.", lifespan=lifespan)
-origins = os.getenv("CORS_ORIGINS", "*")
+origins = os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")
 allowed_origins = [origin.strip() for origin in origins.split(",") if origin.strip()]
+if "*" in allowed_origins:
+    raise RuntimeError("CORS_ORIGINS cannot include '*' when credentials are enabled")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins if allowed_origins else ["*"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

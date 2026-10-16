@@ -1,11 +1,22 @@
 import pytest
+import uuid
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from sqlalchemy import delete
 
 from app.database import SessionLocal
 from app.main import app
-from app.models import Incident as IncidentModel
+from app.models import Evidence, Incident as IncidentModel, WorkflowAudit, WorkflowOutbox
 from app.services.incident_service import severity_for, validate_transition
+
+
+INTERNAL_HEADERS = {"Authorization": "Bearer local-dev-internal-token"}
+DASHBOARD_HEADERS = {"Authorization": "Bearer demo-admin-token"}
+
+
+@pytest.fixture(autouse=True)
+def disable_n8n_for_api_tests(monkeypatch):
+    monkeypatch.setenv("N8N_ENABLED", "false")
 
 
 @pytest.mark.parametrize(("confidence", "expected"), [(0.69, "low"), (0.70, "medium"), (0.84, "medium"), (0.85, "high")])
@@ -25,9 +36,9 @@ def test_simulate_creates_contract_incident():
     with TestClient(app) as client:
         response = client.post("/api/simulate", json={"type": "fall_collapse", "camera_id": "cam_01"})
         incident = response.json()
-        acknowledged = client.patch(f"/api/incidents/{incident['id']}", json={"status": "acknowledged"})
-        resolved = client.patch(f"/api/incidents/{incident['id']}", json={"status": "resolved", "notes": "Reviewed by operator"})
-        invalid = client.patch(f"/api/incidents/{incident['id']}", json={"status": "new"})
+        acknowledged = client.patch(f"/api/incidents/{incident['id']}", headers=DASHBOARD_HEADERS, json={"status": "acknowledged"})
+        resolved = client.patch(f"/api/incidents/{incident['id']}", headers=DASHBOARD_HEADERS, json={"status": "resolved", "notes": "Reviewed by operator"})
+        invalid = client.patch(f"/api/incidents/{incident['id']}", headers=DASHBOARD_HEADERS, json={"status": "new"})
     assert response.status_code == 201
     assert incident["camera_id"] == "cam_01"
     assert incident["type"] == "fall_collapse"
@@ -41,6 +52,9 @@ def test_simulate_creates_contract_incident():
     with SessionLocal() as db:
         created_row = db.get(IncidentModel, incident["id"])
         if created_row is not None:
+            db.execute(delete(Evidence).where(Evidence.incident_id == incident["id"]))
+            db.execute(delete(WorkflowOutbox).where(WorkflowOutbox.incident_id == incident["id"]))
+            db.execute(delete(WorkflowAudit).where(WorkflowAudit.incident_id == incident["id"]))
             db.delete(created_row)
             db.commit()
 
@@ -80,11 +94,12 @@ def test_camera_crud_round_trip():
 
 def test_ai_ingest_creates_incident_and_evidence():
     with TestClient(app) as client:
-        response = client.post("/api/internal/incidents", json={
+        response = client.post("/api/internal/incidents", headers=INTERNAL_HEADERS, json={
             "camera_id": "cam_01",
             "camera_name": "Central Plaza - North",
             "location": {"lat": 12.9716, "lng": 77.5946, "label": "Central Plaza"},
             "type": "fall_collapse",
+            "event_id": f"evt_test_{uuid.uuid4().hex}",
             "confidence": 0.93,
             "severity": "high",
             "timestamp": "2026-10-11T12:00:00Z",
@@ -97,6 +112,9 @@ def test_ai_ingest_creates_incident_and_evidence():
         incident = response.json()
         assert incident["camera_id"] == "cam_01"
         assert incident["type"] == "fall_collapse"
+        assert incident["schema_version"] == "1.0"
+        assert incident["source"] == "ai_detection"
+        assert incident["event_id"]
 
         evidence_response = client.post("/api/evidence/upload", json={
             "incident_id": incident["id"],

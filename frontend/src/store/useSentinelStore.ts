@@ -25,8 +25,12 @@ export const useSentinelStore = create<SentinelState>((set) => ({
   incidents: [], cameras: [], stats: null, page: 'Live Ops', selected: null,
   connected: false, mockMode: false, sound: true, toast: null,
   setData: (incidents, cameras, stats) => set({ incidents, cameras, stats }),
-  upsert: (incident) => set((state) => ({
+  upsert: (incident) => set((state) => {
+    const current = state.incidents.find((item) => item.id === incident.id)
+    if (current?.updated_at && incident.updated_at && current.updated_at > incident.updated_at) return state
+    return ({
     incidents: [incident, ...state.incidents.filter((item) => item.id !== incident.id)].sort((a, b) => b.timestamp.localeCompare(a.timestamp)),
+    selected: state.selected?.id === incident.id ? incident : state.selected,
     stats: state.stats ? (() => {
       const previous = state.incidents.find((item) => item.id === incident.id)
       const by_type = { ...state.stats.by_type }
@@ -52,7 +56,7 @@ export const useSentinelStore = create<SentinelState>((set) => ({
       changeHour(incident.timestamp, 1)
       return { ...state.stats, total: state.stats.total + (previous ? 0 : 1), by_type, by_status, by_hour, by_camera: cameras.sort((a, b) => b.count - a.count) }
     })() : null,
-  })),
+  })}),
   setPage: (page) => set({ page }), select: (selected) => set({ selected }),
   setConnected: (connected) => set({ connected }), setMockMode: (mockMode) => set({ mockMode }),
   setSound: (sound) => set({ sound }), setToast: (toast) => set({ toast }),

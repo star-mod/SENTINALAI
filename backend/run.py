@@ -14,7 +14,7 @@ def available_port(start_port: int = 8000, max_tries: int = 20) -> int:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
-                sock.bind(("0.0.0.0", port))
+                sock.bind(("127.0.0.1", port))
                 return port
             except OSError:
                 continue
@@ -24,7 +24,7 @@ def available_port(start_port: int = 8000, max_tries: int = 20) -> int:
 def main() -> None:
     import uvicorn
 
-    host = os.getenv("HOST", "0.0.0.0")
+    host = os.getenv("HOST", "127.0.0.1")
     configured_port = int(os.getenv("PORT", "8000"))
     port = configured_port if configured_port != 8000 else available_port(8000)
     reload_enabled = os.getenv("RELOAD", "false").lower() == "true"

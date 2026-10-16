@@ -8,6 +8,7 @@ import math
 import os
 import threading
 import time
+import uuid
 from typing import Dict, List, Optional, Any, Tuple
 import cv2
 import numpy as np
@@ -348,8 +349,9 @@ class CameraWorker(threading.Thread):
         trigger_time: float
     ):
         """Generates evidence snapshots/clips and submits to API server."""
-        ts_slug = int(time.time() * 1000) % 100000
-        incident_id = f"inc_{self.camera_id}_{ts_slug:05d}"
+        event_uuid = uuid.uuid4().hex
+        incident_id = f"inc_{event_uuid[:28]}"
+        event_id = f"evt_{event_uuid}"
 
         # 1. Save Snapshot immediately using the current verified annotated frame
         snapshot_url = self.ring_buffer.save_snapshot(
@@ -370,17 +372,24 @@ class CameraWorker(threading.Thread):
 
         # Build Incident Payload strictly matching Shared Contract
         payload = {
+            "id": incident_id,
+            "event_id": event_id,
             "camera_id": self.camera_id,
             "camera_name": self.camera_name,
             "location": loc,
             "type": detection.incident_type,
             "confidence": detection.confidence,
-            "severity": detection.severity,
             "timestamp": detection.timestamp,
             "snapshot_url": snapshot_url,
             "clip_url": clip_url,
             "notes": detection.description,
             "verification": detection.verification,
+            "schema_version": "1.0",
+            "source": "ai_detection",
+            "detection_metadata": {
+                "track_count": len(detection.track_ids),
+                "detector": detection.incident_type,
+            },
         }
 
         # If an in-process callback is provided, invoke it immediately
@@ -393,7 +402,13 @@ class CameraWorker(threading.Thread):
         # Also dispatch via HTTP to internal API endpoint
         def _post_async():
             try:
-                requests.post(self.api_url, json=payload, timeout=2.5)
+                token = os.getenv("INTERNAL_API_TOKEN", "local-dev-internal-token")
+                requests.post(
+                    self.api_url,
+                    json=payload,
+                    timeout=2.5,
+                    headers={"Authorization": f"Bearer {token}"},
+                )
             except Exception:
                 pass  # Graceful fallback if backend is momentarily restarting
 
