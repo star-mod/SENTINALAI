@@ -56,7 +56,7 @@ class VisionTracker:
                 results = self.yolo_model.track(
                     frame,
                     persist=True,
-                    classes=[0],  # Class 0 = Person only
+                    classes=[0, 2, 3, 5, 7],  # Person (0), Car (2), Motorcycle (3), Bus (5), Truck (7)
                     verbose=False,
                     device=self.device,
                     tracker="bytetrack.yaml",
@@ -369,19 +369,39 @@ class CameraWorker(threading.Thread):
         loc = self.camera_cfg.get("location", {"lat": 12.9716, "lng": 77.5946, "label": "Security Zone"})
 
         # Build Incident Payload strictly matching Shared Contract
+        # Stable ID generation: Use a hash of camera, type, track_id, and a time window (e.g., 60s)
+        # This prevents the same accident from triggering multiple alerts across consecutive frames.
+        time_window = int(trigger_time // 60)
+        track_ids_str = ",".join(map(str, sorted(detection.track_ids)))
+        dedup_key = f"{self.camera_id}_{detection.incident_type}_{track_ids_str}_{time_window}"
+
         payload = {
+            "event_id": f"evt_{incident_id}",
+            "deduplication_key": dedup_key,
             "camera_id": self.camera_id,
-            "camera_name": self.camera_name,
-            "location": loc,
-            "type": detection.incident_type,
-            "confidence": detection.confidence,
-            "severity": detection.severity,
-            "timestamp": detection.timestamp,
-            "snapshot_url": snapshot_url,
-            "clip_url": clip_url,
-            "notes": detection.description,
-            "verification": detection.verification,
+            "department_id": "dept_demo_01",
+            "location": self.camera_cfg.get("location", "Security Zone"),
+            "timestamp": datetime.fromtimestamp(trigger_time, tz=timezone.utc).isoformat(),
+            "incident_type": detection.incident_type.upper(),
+            "confidence": round(detection.confidence, 2),
+            "status": "UNVERIFIED",
+            "evidence_reference": snapshot_url,
+            "detection_method": "YOLO+ByteTrack+temporal_rules",
+            "detection_summary": {
+                "track_ids": detection.track_ids,
+                "frames_confirmed": detection.verification.get("frames_confirmed"),
+                "severity": detection.severity.upper(),
+                "description": detection.description
+            },
+            "priority": detection.severity.upper(),
+            "workflow_state": "NEW",
+            "requires_human_review": True
         }
+
+        print("\n" + "="*50)
+        print(f"🚨 INCIDENT DETECTED: {payload['incident_type']}")
+        print(json.dumps(payload, indent=2))
+        print("="*50 + "\n")
 
         # If an in-process callback is provided, invoke it immediately
         if self.incident_callback:
