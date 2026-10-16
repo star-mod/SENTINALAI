@@ -7,12 +7,13 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Camera, Evidence, Incident, User
+from app.models import Camera, Evidence, Incident, IncidentEvent, User
 from app.schemas import AuthRequest, AuthToken, Camera as CameraSchema
 from app.schemas import CameraCreate, CameraUpdate, Evidence as EvidenceSchema
 from app.schemas import EvidenceCreate, Incident as IncidentSchema
@@ -212,8 +213,8 @@ def stats(db: Session = Depends(get_db)):
     return {"total": len(rows), "by_type": by_type, "by_status": by_status, "by_hour": [{"hour": hour, "count": count} for hour, count in by_hour.items()], "by_camera": sorted(by_camera.values(), key=lambda item: item["count"], reverse=True)}
 
 
-def _create_incident(db: Session, payload: dict) -> dict:
-    incident_id = next_incident_id(db)
+def _create_incident(db: Session, payload: dict, event_id: str | None = None, incident_id: str | None = None) -> dict:
+    incident_id = incident_id or next_incident_id(db)
     timestamp = datetime.fromisoformat(payload["timestamp"].replace("Z", "+00:00"))
     row = Incident(
         id=incident_id,
@@ -231,20 +232,47 @@ def _create_incident(db: Session, payload: dict) -> dict:
         verification=json.dumps(payload["verification"] or {"window_seconds": 2.5, "frames_confirmed": 30, "frames_required": 25}),
     )
     db.add(row)
+    if event_id is not None:
+        db.flush()
+        db.add(IncidentEvent(event_id=event_id, incident_id=incident_id))
     db.commit()
     db.refresh(row)
     return as_contract(row)
 
 
 @router.post("/internal/incidents", response_model=IncidentSchema, status_code=201, dependencies=[Depends(verify_internal_ingest_token)])
-async def create_internal_incident(body: InternalIncident, db: Session = Depends(get_db)):
+async def create_internal_incident(body: InternalIncident, response: Response, db: Session = Depends(get_db)):
+    existing_event = db.get(IncidentEvent, body.event_id)
+    if existing_event is not None:
+        existing_incident = db.get(Incident, existing_event.incident_id)
+        if existing_incident is None:
+            logger.error("Incident idempotency record points to a missing incident (event_id=%s)", body.event_id)
+            raise HTTPException(status_code=500, detail="Stored incident event is inconsistent")
+        response.status_code = 200
+        return as_contract(existing_incident)
+
     payload = body.model_dump(exclude_none=True)
     camera = camera_or_404(db, payload["camera_id"])
     payload["camera_name"] = body.camera_name or camera.name
     payload["location"] = body.location.model_dump() if body.location is not None else json.loads(camera.location)
     payload["verification"] = (body.verification.model_dump() if body.verification is not None else {"window_seconds": 2.5, "frames_confirmed": 30, "frames_required": 25})
     payload["severity"] = body.severity or severity_for(body.confidence)
-    created = _create_incident(db, payload)
+    # Random IDs avoid collisions when separate camera workers ingest concurrently.
+    incident_id = f"inc_{uuid.uuid4().hex[:12]}"
+    try:
+        created = _create_incident(db, payload, event_id=body.event_id, incident_id=incident_id)
+    except IntegrityError:
+        db.rollback()
+        # A concurrent request may have committed this event ID first. Return its
+        # incident as a duplicate; unrelated integrity errors remain errors.
+        existing_event = db.get(IncidentEvent, body.event_id)
+        if existing_event is None:
+            raise
+        existing_incident = db.get(Incident, existing_event.incident_id)
+        if existing_incident is None:
+            raise HTTPException(status_code=500, detail="Stored incident event is inconsistent")
+        response.status_code = 200
+        return as_contract(existing_incident)
     await ws_manager.broadcast("incident.created", created)
     return created
 

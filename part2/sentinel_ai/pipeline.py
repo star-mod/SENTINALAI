@@ -4,11 +4,14 @@ computes Farneback optical flow, and evaluates temporal safety detectors.
 Features resilient offline fallbacks and camera-level fault isolation.
 """
 
-import math
+import hashlib
 import logging
+import math
 import os
 import threading
 import time
+import uuid
+from collections import OrderedDict
 from typing import Dict, List, Optional, Any, Tuple
 import cv2
 import numpy as np
@@ -23,6 +26,17 @@ from sentinel_ai.frame_hub import FrameHub
 
 logger = logging.getLogger(__name__)
 N8N_WEBHOOK_TIMEOUT_SECONDS = 5.0
+EVENT_ID_CACHE_SIZE = 8192
+
+
+def claim_event_id(cache: OrderedDict, event_id: str) -> bool:
+    """Remember a dispatched event key in a bounded per-worker cache."""
+    if event_id in cache:
+        return False
+    cache[event_id] = None
+    if len(cache) > EVENT_ID_CACHE_SIZE:
+        cache.popitem(last=False)
+    return True
 
 
 def build_incident_payload(
@@ -31,9 +45,11 @@ def build_incident_payload(
     location: Dict[str, Any],
     snapshot_url: str,
     clip_url: str,
+    event_id: str,
 ) -> Dict[str, Any]:
     """Map a temporally confirmed detection and generated evidence to the ingest contract."""
     return {
+        "event_id": event_id,
         "camera_id": detection.camera_id,
         "camera_name": camera_name,
         "location": location,
@@ -46,6 +62,19 @@ def build_incident_payload(
         "notes": detection.description,
         "verification": detection.verification,
     }
+
+
+def build_event_id(camera_id: str, incident_type: str, source_path: str, frame_idx: int) -> str:
+    """Return a replay-stable key for a local video frame, or a fresh live-event key."""
+    try:
+        source = os.path.realpath(source_path)
+        stat = os.stat(source)
+        if os.path.isfile(source):
+            identity = f"{camera_id}|{incident_type}|{source}|{stat.st_size}|{stat.st_mtime_ns}|{frame_idx}"
+            return "evt_" + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:40]
+    except (OSError, TypeError, ValueError):
+        pass
+    return "evt_" + uuid.uuid4().hex
 
 
 def send_incident_to_n8n(
@@ -261,6 +290,8 @@ class CameraWorker(threading.Thread):
         self.target_fps = float(pipeline_cfg.get("target_fps", 15.0))
         self.webhook_url = os.getenv("N8N_WEBHOOK_URL")
         self.cooldown_sec = float(pipeline_cfg.get("cooldown_seconds", 20.0))
+        self._dispatched_event_ids = OrderedDict()
+        self._event_id_lock = threading.Lock()
 
         # Register camera in FrameHub
         FrameHub.register_camera(self.camera_id, self.camera_name)
@@ -390,7 +421,7 @@ class CameraWorker(threading.Thread):
                     self.ring_buffer.check_pending_clips(current_time=now)
 
                     if triggered_detection:
-                        self._handle_incident(triggered_detection, frame, annotated_frame, now)
+                        self._handle_incident(triggered_detection, frame, annotated_frame, now, frame_idx)
 
                 except Exception as worker_err:
                     # Camera error isolation: ensure thread doesn't terminate
@@ -414,9 +445,14 @@ class CameraWorker(threading.Thread):
         detection: Detection,
         current_frame: np.ndarray,
         annotated_frame: np.ndarray,
-        trigger_time: float
+        trigger_time: float,
+        frame_idx: int,
     ):
         """Generate evidence and submit the confirmed candidate to the n8n webhook."""
+        event_id = build_event_id(self.camera_id, detection.incident_type, self.video_path, frame_idx)
+        if event_id in self._dispatched_event_ids:
+            logger.info("Skipping replayed CV candidate (event_id=%s camera=%s)", event_id, self.camera_id)
+            return
         ts_slug = int(time.time() * 1000) % 100000
         incident_id = f"inc_{self.camera_id}_{ts_slug:05d}"
 
@@ -444,7 +480,13 @@ class CameraWorker(threading.Thread):
             location=loc,
             snapshot_url=snapshot_url,
             clip_url=clip_url,
+            event_id=event_id,
         )
+
+        with self._event_id_lock:
+            if not claim_event_id(self._dispatched_event_ids, event_id):
+                logger.info("Skipping replayed CV candidate (event_id=%s camera=%s)", event_id, self.camera_id)
+                return
 
         # If an in-process callback is provided, invoke it immediately
         if self.incident_callback:

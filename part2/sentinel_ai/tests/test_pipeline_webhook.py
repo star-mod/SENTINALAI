@@ -1,3 +1,4 @@
+from collections import OrderedDict
 import requests
 
 from sentinel_ai.detectors.base import Detection
@@ -24,6 +25,7 @@ def test_build_incident_payload_maps_detection_and_existing_evidence_urls():
         location={"lat": 12.97, "lng": 77.59, "label": "Central Plaza"},
         snapshot_url="/media/snapshots/inc_cam_01_12345.jpg",
         clip_url="/media/clips/inc_cam_01_12345.mp4",
+        event_id="evt_test_frame_123",
     )
 
     assert payload == {
@@ -36,6 +38,7 @@ def test_build_incident_payload_maps_detection_and_existing_evidence_urls():
         "timestamp": "2026-10-16T10:00:00+00:00",
         "snapshot_url": "/media/snapshots/inc_cam_01_12345.jpg",
         "clip_url": "/media/clips/inc_cam_01_12345.mp4",
+        "event_id": "evt_test_frame_123",
         "notes": "Temporal fall candidate",
         "verification": {"window_seconds": 2.5, "frames_confirmed": 22, "frames_required": 15},
     }
@@ -59,6 +62,7 @@ def test_send_incident_to_n8n_posts_contract_and_auth_header(monkeypatch):
         {"lat": 12.97, "lng": 77.59, "label": "Central Plaza"},
         "/media/snapshots/inc_1.jpg",
         "/media/clips/inc_1.mp4",
+        "evt_test_frame_123",
     )
 
     delivered = pipeline.send_incident_to_n8n(payload, "https://example.test/hook", "test-secret")
@@ -114,3 +118,54 @@ def test_send_incident_to_n8n_does_not_send_without_url(monkeypatch, caplog):
 
     assert delivered is False
     assert "N8N_WEBHOOK_URL is not configured" in caplog.text
+
+
+def test_local_video_event_id_is_stable_for_replayed_frame(tmp_path):
+    source = tmp_path / "demo.mp4"
+    source.write_bytes(b"test fixture")
+    first = pipeline.build_event_id("cam_01", "fall_collapse", str(source), 145)
+    replay = pipeline.build_event_id("cam_01", "fall_collapse", str(source), 145)
+    other_frame = pipeline.build_event_id("cam_01", "fall_collapse", str(source), 146)
+    other_type = pipeline.build_event_id("cam_01", "physical_altercation", str(source), 145)
+
+    assert first == replay
+    assert first != other_frame
+    assert first != other_type
+
+
+def test_live_source_event_ids_are_fresh():
+    first = pipeline.build_event_id("cam_01", "fall_collapse", "rtsp://camera/live", 145)
+    second = pipeline.build_event_id("cam_01", "fall_collapse", "rtsp://camera/live", 145)
+
+    assert first != second
+
+
+def test_dispatched_event_cache_suppresses_replay_and_stays_bounded(monkeypatch):
+    cache = OrderedDict()
+    assert pipeline.claim_event_id(cache, "evt_replayed") is True
+    assert pipeline.claim_event_id(cache, "evt_replayed") is False
+
+    monkeypatch.setattr(pipeline, "EVENT_ID_CACHE_SIZE", 2)
+    pipeline.claim_event_id(cache, "evt_second")
+    pipeline.claim_event_id(cache, "evt_third")
+    assert len(cache) == 2
+    assert "evt_replayed" not in cache
+
+
+def test_webhook_delivery_is_single_attempt_on_transient_failure(monkeypatch):
+    calls = 0
+
+    def fail_once(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        raise requests.Timeout("test")
+
+    monkeypatch.setattr(pipeline.requests, "post", fail_once)
+    delivered = pipeline.send_incident_to_n8n(
+        {"event_id": "evt_retry_case", "camera_id": "cam_01", "type": "fall_collapse"},
+        "https://example.test/hook",
+        "test-secret",
+    )
+
+    assert delivered is False
+    assert calls == 1

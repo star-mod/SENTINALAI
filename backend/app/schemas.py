@@ -67,6 +67,7 @@ class IncidentPatch(BaseModel):
 
 
 class InternalIncident(BaseModel):
+    event_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$")
     camera_id: str
     camera_name: str | None = None
     location: Location | None = None

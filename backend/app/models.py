@@ -1,4 +1,4 @@
-from sqlalchemy import Column, DateTime, Float, String, Text
+from sqlalchemy import Column, DateTime, Float, ForeignKey, String, Text
 from app.database import Base
 
 
@@ -28,6 +28,15 @@ class Incident(Base):
     clip_url = Column(String(255), nullable=False)
     notes = Column(Text, nullable=False, default="")
     verification = Column(Text, nullable=False)
+
+
+class IncidentEvent(Base):
+    """Idempotency key ledger for internal incident ingestion."""
+
+    __tablename__ = "incident_events"
+
+    event_id = Column(String(128), primary_key=True)
+    incident_id = Column(String(32), ForeignKey("incidents.id"), nullable=False, unique=True)
 
 
 class Evidence(Base):

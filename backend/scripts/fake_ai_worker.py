@@ -2,6 +2,7 @@ import argparse
 import os
 import random
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -30,6 +31,7 @@ def main() -> None:
         camera_name, location = CAMERAS[camera_id]
         incident_type = random.choice(TYPES)
         payload = {
+            "event_id": f"evt_{uuid.uuid4().hex}",
             "camera_id": camera_id, "camera_name": camera_name, "location": location,
             "type": incident_type, "confidence": round(random.uniform(0.72, 0.97), 2),
             "timestamp": datetime.now(timezone.utc).isoformat(),

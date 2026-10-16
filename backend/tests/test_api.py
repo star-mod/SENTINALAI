@@ -10,6 +10,7 @@ from app.services.incident_service import severity_for, validate_transition
 
 def internal_incident_payload():
     return {
+        "event_id": "evt_test_ingest_001",
         "camera_id": "cam_01",
         "camera_name": "Central Plaza - North",
         "location": {"lat": 12.9716, "lng": 77.5946, "label": "Central Plaza"},
@@ -115,6 +116,28 @@ def test_ai_ingest_creates_incident_and_evidence(monkeypatch):
         list_response = client.get(f"/api/incidents/{incident['id']}/evidence")
         assert list_response.status_code == 200
         assert any(item["id"] == evidence["id"] for item in list_response.json())
+
+
+def test_internal_ingest_is_idempotent_for_event_id(monkeypatch):
+    monkeypatch.setenv("INTERNAL_INGEST_TOKEN", "test-ingest-token")
+    payload = internal_incident_payload()
+    payload["event_id"] = "evt_test_idempotency_002"
+    with TestClient(app) as client:
+        first = client.post("/api/internal/incidents", json=payload, headers={"X-Internal-Token": "test-ingest-token"})
+        duplicate = client.post("/api/internal/incidents", json=payload, headers={"X-Internal-Token": "test-ingest-token"})
+
+    assert first.status_code == 201, first.text
+    assert duplicate.status_code == 200, duplicate.text
+    assert duplicate.json()["id"] == first.json()["id"]
+
+
+def test_internal_ingest_rejects_invalid_event_id(monkeypatch):
+    monkeypatch.setenv("INTERNAL_INGEST_TOKEN", "test-ingest-token")
+    payload = internal_incident_payload()
+    payload["event_id"] = "bad event id"
+    with TestClient(app) as client:
+        response = client.post("/api/internal/incidents", json=payload, headers={"X-Internal-Token": "test-ingest-token"})
+    assert response.status_code == 422
 
 
 def test_internal_ingest_rejects_missing_token(monkeypatch):
