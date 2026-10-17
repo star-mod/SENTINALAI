@@ -1,5 +1,5 @@
-
 import { useEffect } from "react";
+import LogoMark from "./Logo";
 
 type SplashScreenProps = {
   onComplete: () => void;
@@ -19,26 +19,7 @@ export default function SplashScreen({
 
       <div style={styles.content}>
         <div style={styles.logo}>
-          <svg
-            width="68"
-            height="68"
-            viewBox="0 0 64 64"
-            fill="none"
-            aria-label="SentinelAI shield logo"
-          >
-            <path
-              d="M32 4 53 12V28C53 42 44 52 32 60 20 52 11 42 11 28V12L32 4Z"
-              stroke="#53F5E0"
-              strokeWidth="2.5"
-            />
-            <path
-              d="M22 32 29 39 43 24"
-              stroke="#53F5E0"
-              strokeWidth="3.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
+          <LogoMark size={76} />
         </div>
 
         <h1 style={styles.title}>
