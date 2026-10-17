@@ -1,111 +1,208 @@
-# SentinelAI Control Room
+# SentinelAI
 
-Local-first public safety incident demo for authorized prerecorded or simulated feeds. The dashboard and API support operator review; they do not identify people or take autonomous action. `part2/` has been updated to the latest Part 2 drop, including real camera footage in `part2/data/videos/` (see its SOURCES.md for provenance and usage terms).
+**AI-assisted incident detection and response for authorized, prerecorded CCTV footage.**
 
-## Project Structure
+SentinelAI watches video feeds, flags candidate safety incidents (a person falling, a physical altercation, abnormal crowd movement), saves annotated evidence, and shows everything on a live operator dashboard where a human reviews, acknowledges and resolves each alert. It never identifies people and never acts on its own.
 
-```text
-backend/                     FastAPI app, tests, demo worker, requirements, runtime data
-frontend/                    React 18 + Vite + TypeScript dashboard
-data/videos/                 Shared local video inputs (ignored by Git)
-part2/                       Existing project; not modified
+> **Live demo:** `https://YOUR-DASHBOARD.onrender.com`  <https://sentinalai-1-m5nl.onrender.com>
+> The demo backend may sleep when idle (first load can take up to ~1 minute). AI detection runs on a team machine during judging; see [Status](#status-and-limitations).
+
+---
+
+## What it does
+
+```
+Video feed ─► AI pipeline ─► FastAPI backend ─► Database ─► React dashboard
+ (YOLO pose      (temporal       (validates,       (SQLite)    (live via WebSocket)
+  + tracking)     detectors)      stores, queues)       │
+                                                        └──► n8n ─► Telegram   (planned, see Status)
 ```
 
-## Run Locally
+- **Detectors:** fall/collapse, physical altercation, abnormal crowd movement. Alerts need a sustained pattern across several frames, so a single frame never triggers one.
+- **Evidence:** every candidate incident stores an annotated snapshot, a short clip, a timestamp, the camera, a confidence value and verification metadata.
+- **Dashboard:** live operations view, camera grid, incident register with filters, map, analytics, committee inbox, acknowledge/resolve actions, and a clearly labelled demo mode.
+- **Real-time:** new incidents and status changes are pushed over a WebSocket, with a REST snapshot for reconnects.
+- **Workflow hooks:** a persistent outbox and authenticated callbacks let an external workflow (n8n) report notification, acknowledgement and escalation state back to the API.
 
-Python 3.11 is recommended. From the workspace root, start the backend in
-PowerShell:
+## Tech stack
+
+| Layer | Technology |
+|---|---|
+| Computer vision | Ultralytics YOLOv8 pose, ByteTrack, OpenCV, NumPy |
+| Backend | FastAPI, SQLAlchemy, SQLite, Pydantic v2, httpx |
+| Frontend | React 18, Vite, TypeScript, Tailwind, Recharts, Leaflet |
+| Automation | n8n webhook workflow (in progress) |
+| Hosting (demo) | Render (Web Service + Static Site), optional Cloudflare Tunnel |
+
+## Repository layout
+
+```text
+backend/        FastAPI app, workflow outbox, migrations, tests
+frontend/       React dashboard
+part2/          Computer-vision pipeline (sentinel_ai/), detectors, model weights, tuning guide
+automation/n8n/ n8n workflow export
+docs/contracts/ Versioned incident schema, example payload, workflow callback contract
+```
+
+---
+
+## Quick start (local, Windows PowerShell)
+
+Python **3.11** is recommended. The backend pins package versions that do not support newer Python releases.
 
 ```powershell
-Set-Location C:\Users\anupa\Downloads\SENTINALAI-main
+# from the project root
 py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r backend\requirements.txt
-if (-not (Test-Path backend\.env)) { Copy-Item backend\.env.example backend\.env }
-Set-Location backend
-python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+Copy-Item backend\.env.example backend\.env
+cd backend
+python run.py
 ```
 
-The API creates or incrementally migrates its SQLite database, seeds four cameras and six historical incidents, and creates local placeholder snapshots/clips under `backend/`. Existing records are preserved. OpenAPI is at `http://localhost:8000/docs`. Internal CV ingestion and workflow callbacks require `INTERNAL_API_TOKEN`; the sample `.env` value is for local demo use only. Dashboard status changes use the sample `APP_DASHBOARD_TOKEN`, also demo-only.
+- API docs: `http://localhost:8000/docs`
+- Health check: `http://localhost:8000/api/health`
 
-To enable n8n delivery, set `N8N_ENABLED=true`, `N8N_WEBHOOK_URL`, and
-`N8N_WEBHOOK_SECRET` in `backend/.env`. A persistent outbox queues events
-alongside each incident and retries webhook failures after commit. A webhook
-2xx response means only that n8n accepted the event; Telegram delivery is not
-guaranteed. See [the callback contract](docs/contracts/workflow-callbacks.md)
-and the versioned [incident schema](docs/contracts/incident-event.schema.json).
-
-To run the existing pipeline without rebuilding it, install
-`../part2/requirements.txt` while in `backend/`, then set `ENABLE_PIPELINE=true`
-in `backend/.env`; the pipeline uses the configured media directories and sends
-the internal bearer token from that environment.
-
-Camera clips are read from the ignored local folder `data/videos/` first, with existing `part2/data/videos/` files as fallback. The separately acquired research footage is not committed or redistributed. Check `part2/data/videos/SOURCES.md` for provenance and usage conditions before using or sharing any downloaded clip.
-
-In a second terminal:
+In a second terminal, start the dashboard:
 
 ```powershell
-Set-Location C:\Users\anupa\Downloads\SENTINALAI-main
-if (-not (Test-Path frontend\.env.local)) { Copy-Item frontend\.env.example frontend\.env.local }
+Copy-Item frontend\.env.example frontend\.env.local
 npm --prefix frontend ci
 npm --prefix frontend run dev
 ```
 
-Dashboard: `http://localhost:5173`. To use the live API, set `VITE_USE_MOCK=false` in `frontend/.env.local`. To run the dashboard independently/offline, keep it `true`; it loads six local records and generates a demo event about every 60 seconds. The Map uses standard OpenStreetMap tiles without an API key. Map tiles need an internet connection; camera markers and incident data remain local when offline.
+Open `http://localhost:5173`. In `frontend/.env.local`, set `VITE_USE_MOCK=false` to use the real backend, or keep `true` for an offline demo with sample data.
 
-## Demo Worker
-
-With the API running, send a verified sample event every 15 seconds:
+### Turn on the AI pipeline (optional, needs more RAM)
 
 ```powershell
-python backend/scripts/fake_ai_worker.py
+pip install ultralytics
+# in backend\.env set:  ENABLE_PIPELINE=true
+cd backend
+python run.py
 ```
 
-Choose another cadence or API address with `--interval 8 --base-url http://localhost:8000`.
+The pipeline reads videos from `data/videos/` first, then `part2/data/videos/`. Footage is not committed to this repository (see [Data and licensing](#data-and-licensing)). To run the detector on one file without the backend, see `part2/sentinel_ai/run.py` and `part2/sentinel_ai/TUNING_GUIDE.md`.
 
-## API Examples
+---
+
+## Configuration
+
+Copy `backend/.env.example` to `backend/.env`. Never commit `.env` files or real secrets.
+
+| Variable | Purpose |
+|---|---|
+| `APP_ENV` | `development` or `production`. Production requires the three secrets below to be 32+ characters. |
+| `INTERNAL_API_TOKEN` | Bearer token the AI pipeline and workflow callbacks use to call internal endpoints. |
+| `APP_DASHBOARD_TOKEN` | Token for dashboard actions. Must match `VITE_DASHBOARD_TOKEN` in the frontend build. |
+| `APP_ADMIN_USERNAME` / `APP_ADMIN_PASSWORD` | Demo admin login. |
+| `DATABASE_URL` | Defaults to `sqlite:///./sentinelai.db`. |
+| `MEDIA_DIR` | Where snapshots and clips are stored and served under `/media/`. |
+| `CORS_ORIGINS` | Comma-separated dashboard origins, no trailing slash. Must match the dashboard URL exactly. |
+| `ENABLE_PIPELINE` | `true` starts the AI pipeline inside the backend. |
+| `N8N_ENABLED`, `N8N_WEBHOOK_URL`, `N8N_WEBHOOK_SECRET`, `N8N_TIMEOUT_SECONDS` | Outbound n8n delivery. Keep disabled until a workflow is configured. |
+
+Frontend (`frontend/.env.local`, or build-time variables on the host):
+
+| Variable | Purpose |
+|---|---|
+| `VITE_API_URL` | Backend base URL, no trailing slash. |
+| `VITE_USE_MOCK` | `true` = offline sample data, `false` = live backend. |
+| `VITE_DASHBOARD_TOKEN` | Must equal the backend's `APP_DASHBOARD_TOKEN`. It is bundled into the public JavaScript, so treat it as demo-grade, not real security. |
+
+---
+
+## Deploy on Render
+
+**Backend (Web Service)**
+
+| Setting | Value |
+|---|---|
+| Root Directory | `backend` |
+| Build Command | `pip install -r requirements.txt` |
+| Start Command | `uvicorn app.main:app --host 0.0.0.0 --port $PORT` |
+| Health Check Path | `/api/health` |
+| Env | `PYTHON_VERSION=3.11.9`, `APP_ENV=production`, the three secrets (32+ chars each), `CORS_ORIGINS=<dashboard URL>`, `ENABLE_PIPELINE=false`, `N8N_ENABLED=false` |
+
+**Frontend (Static Site)**
+
+| Setting | Value |
+|---|---|
+| Root Directory | `frontend` |
+| Build Command | `npm ci && npm run build` |
+| Publish Directory | `dist` |
+| Env | `VITE_API_URL=<backend URL>`, `VITE_USE_MOCK=false`, `VITE_DASHBOARD_TOKEN=<same as APP_DASHBOARD_TOKEN>` |
+
+Deploy the backend first, then the frontend, then set `CORS_ORIGINS` on the backend to the frontend URL. After changing any `VITE_` variable, redeploy the static site, because those values are read at build time.
+
+**Free-plan limits:** the backend sleeps after ~15 minutes idle, the SQLite file and media folder reset on restart, and 512 MB of RAM is not enough for the AI pipeline.
+
+### Full AI mode (laptop + tunnel)
+
+Run the backend with `ENABLE_PIPELINE=true` on a laptop, expose it with `cloudflared tunnel --url http://localhost:8000`, point the dashboard's `VITE_API_URL` at the tunnel address, and set the backend's `CORS_ORIGINS` to the dashboard URL. The quick-tunnel address changes each run, and the laptop must stay on.
+
+---
+
+## API overview
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/health`, `GET /api/cameras`, `GET /api/stats` | Status, cameras, analytics |
+| `GET /api/incidents`, `GET /api/incidents/{id}` | Incident list (filterable) and detail |
+| `GET /api/incidents/snapshot` | Reconnect-safe snapshot |
+| `PATCH /api/incidents/{id}` | Update status/notes (dashboard token) |
+| `POST /api/incidents/{id}/acknowledge`, `/resolve` | Lifecycle actions |
+| `GET /api/incidents/{id}/workflow` | Workflow and notification state |
+| `POST /api/internal/incidents` | Ingest an incident from the AI pipeline (internal token) |
+| `POST /api/internal/incidents/{id}/workflow-events` | Workflow callbacks (internal token) |
+| `POST /api/simulate` | Create a clearly labelled simulated incident |
+| `GET /api/stream/{camera_id}` | MJPEG camera stream |
+| `GET /media/...` | Evidence snapshots and clips |
+| `WS /ws/incidents` | Live `incident.created`, `incident.updated`, `workflow.updated` events |
+
+Incident types: `fall_collapse`, `physical_altercation`, `abnormal_crowd_movement` (the backend also accepts `vehicle_accident`). The versioned schema and example payload are in [`docs/contracts/`](docs/contracts/). Every incident carries a `source` field (`ai_detection` or `simulation`) so simulated events are never presented as real detections.
+
+---
+
+## Testing
 
 ```powershell
-curl.exe http://localhost:8000/api/health
-curl.exe http://localhost:8000/api/cameras
-curl.exe "http://localhost:8000/api/incidents?status=new&type=fall_collapse&camera_id=cam_01"
-curl.exe http://localhost:8000/api/incidents/inc_0001
-curl.exe -X PATCH http://localhost:8000/api/incidents/inc_0001 -H "Content-Type: application/json" -d "{`"status`":`"acknowledged`",`"notes`":`"Operator reviewing evidence`"}"
-curl.exe http://localhost:8000/api/stats
-curl.exe -X POST http://localhost:8000/api/simulate -H "Content-Type: application/json" -d "{`"type`":`"fall_collapse`",`"camera_id`":`"cam_01`"}"
-curl.exe -X POST http://localhost:8000/api/internal/incidents -H "Authorization: Bearer local-dev-internal-token" -H "Content-Type: application/json" -d "{`"camera_id`":`"cam_01`",`"camera_name`":`"Central Plaza - North`",`"location`":{`"lat`":12.9716,`"lng`":77.5946,`"label`":`"Central Plaza`"},`"type`":`"fall_collapse`",`"confidence`":0.91,`"timestamp`":`"2026-10-10T10:00:00Z`",`"snapshot_url`":`"/media/snapshots/cam_01_fall_collapse.jpg`",`"clip_url`":`"/media/clips/cam_01_fall_collapse.mp4`",`"verification`":{`"window_seconds`":2.5,`"frames_confirmed`":38,`"frames_required`":30}}"
-curl.exe http://localhost:8000/api/stream/cam_01
-```
-
-Evidence files are served below `/media/`; for example `http://localhost:8000/media/snapshots/cam_01_fall_collapse.jpg`. The incident WebSocket is `ws://localhost:8000/ws/incidents`, broadcasting `incident.created` and `incident.updated` messages. MJPEG streams are multipart responses at `/api/stream/{camera_id}`.
-
-`GET /api/incidents/snapshot` supplies a reconnect snapshot. The socket also
-broadcasts `workflow.updated`. Internal endpoints reject requests without the
-configured producer token. The login endpoint and default demo credentials are
-not production-grade authentication; configure secrets and place the service
-behind a production identity/access layer before deployment.
-
-The detail drawer uses `/api/incident-video/{type}` to stream the matching local prerecorded MP4 inline with byte-range seeking.
-
-## Checks
-
-```
-
-Authenticate the CV ingest endpoint from PowerShell with the configured token:
-
-```powershell
-$env:INTERNAL_API_TOKEN = "local-dev-internal-token"
-$headers = @{ Authorization = "Bearer $env:INTERNAL_API_TOKEN" }
-Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/api/internal/incidents" -Headers $headers -ContentType "application/json" -Body (Get-Content .\incident.json -Raw)
-```
-
-The dashboard has a local demo token configured in `frontend/.env.example`.
-Match its `VITE_DASHBOARD_TOKEN` to `APP_DASHBOARD_TOKEN` in the backend
-environment when changing the demo value.powershell
-Push-Location backend
+cd backend
 python -m pytest tests -q
-Pop-Location
+cd ..
+python -m pytest part2\sentinel_ai\tests -q
 npm --prefix frontend run build
 ```
 
-For detector configuration and threshold tuning in the existing CV package, see [part2/sentinel_ai/TUNING_GUIDE.md](part2/sentinel_ai/TUNING_GUIDE.md). Keep all video inputs authorized and prerecorded/simulated for this prototype.
+Record your own results here once you have run them. Detection accuracy has not been formally measured on a labelled dataset; do not treat the sample videos as an accuracy benchmark.
+
+---
+
+## Status and limitations
+
+Be explicit about what is real in a demo:
+
+| Area | State |
+|---|---|
+| Dashboard, backend, database, live WebSocket updates | Working |
+| Acknowledge and resolve, incident filters, map, analytics | Working (backend-persisted) |
+| Simulated incidents | Working, always labelled as simulation |
+| AI detection on sample videos | Working locally; **off** on free hosting (RAM limit) |
+| n8n routing, Telegram alerts, timed escalation | **In progress.** The backend outbox and callbacks exist, but the workflow export is minimal. |
+| Real operator login | **Not connected yet** |
+| Evidence on hosted backend | Stored on local disk, so it is lost on restart. Persistent storage is planned. |
+| Production authentication | **No.** Demo credentials and a static dashboard token are not production-grade. |
+
+## Responsible use
+
+- Authorized, prerecorded or simulated footage only.
+- No facial recognition and no person identification. Tracks are anonymous IDs.
+- Human-in-the-loop: the system raises candidates for operator review. It does not dispatch emergency services, and notifications must not claim that anyone has been dispatched unless that actually happened.
+
+## Data and licensing
+
+Sample footage is described in `part2/data/videos/SOURCES.md`. `cam_01` to `cam_03` come from third-party research sources that do not permit redistribution, so they are excluded from this repository by `.gitignore`. Obtain them from the original sources listed there, or generate synthetic clips with `part2/data/sample_generator.py`. `cam_04` (OpenCV sample) is Apache 2.0.
+
+## Team
+
+<!-- Add names and roles -->
