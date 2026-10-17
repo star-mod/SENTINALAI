@@ -9,13 +9,10 @@ import '@fontsource/jetbrains-mono/500.css'
 import { useState } from 'react'
 import App from './App'
 import SplashScreen from './components/SplashScreen'
-import Login from './components/Login'
 
 function Root() {
   const [splash, setSplash] = useState(true)
-  const [authed, setAuthed] = useState(false)
   if (splash) return <SplashScreen onComplete={() => setSplash(false)} />
-  if (!authed) return <Login onLogin={() => setAuthed(true)} />
   return <App />
 }
 
