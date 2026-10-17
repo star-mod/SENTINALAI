@@ -6,7 +6,7 @@ from urllib.parse import urlsplit
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
-IncidentType = Literal["physical_altercation", "fall_collapse", "abnormal_crowd_movement"]
+IncidentType = Literal["physical_altercation", "fall_collapse", "abnormal_crowd_movement", "vehicle_accident"]
 IncidentStatus = Literal["new", "acknowledged", "resolved"]
 Severity = Literal["low", "medium", "high"]
 Priority = Literal["high", "medium", "uncertain", "normal"]
